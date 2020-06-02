@@ -1,0 +1,7 @@
+.vscode/
+__pycache__/
+*.pyc
+lightning_logs/
+data/
+train-pats/
+validation-pats-no-dose/
