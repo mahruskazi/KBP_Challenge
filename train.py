@@ -18,22 +18,25 @@ results_dir = '{}/results'.format(primary_directory)  # parent path where result
 
 # Prepare the data directory
 plan_paths = get_paths(training_data_dir, ext='')  # gets the path of each plan's directory
-num_train_pats = np.minimum(50, len(plan_paths))  # number of plans that will be used to train model
+num_train_pats = np.minimum(100, len(plan_paths))  # number of plans that will be used to train model
 training_paths = plan_paths[:num_train_pats]  # list of training plans
 hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
 dataset = KBPDataset(training_paths)
 print(len(dataset))
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+# dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
-for i_batch, sample_batched in enumerate(dataloader):
-    print(i_batch, sample_batched['patient_list'])
+# for i_batch, sample_batched in enumerate(dataloader):
+#     print(i_batch, sample_batched.keys())
+
+#     print(len(sample_batched['ct']))
+#     break
 
 
-# opt = TrainOptions().parse()
+opt = TrainOptions().parse()
 
-# model = Pix2PixModel(opt)
+model = Pix2PixModel(opt)
 
-# trainer = pl.Trainer()
-# trainer.fit(model)
+trainer = pl.Trainer()
+trainer.fit(model)
 

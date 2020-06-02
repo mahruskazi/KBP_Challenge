@@ -11,7 +11,7 @@ class BaseOptions():
     def initialize(self):
         self.parser.add_argument(
                 '--dataroot',
-                required=True,
+                required=False,
                 help=
                 'path to images (should have subfolders trainA, trainB, valA, valB, etc)'
                 )

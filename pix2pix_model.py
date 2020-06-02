@@ -1,10 +1,14 @@
 import torch
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader
 import pytorch_lightning as pl
+import numpy as np
 from collections import OrderedDict
-from data.create_dataset import CreateDataset
+from kbp_dataset import KBPDataset
+from provided_code.general_functions import get_paths
 import networks
+import sys
 
 
 class Pix2PixModel(pl.LightningModule):
@@ -26,23 +30,19 @@ class Pix2PixModel(pl.LightningModule):
         self.criterionL1 = torch.nn.L1Loss()
 
     def get_inputs(self, data):
-        input_A = data['A']
-        input_B = data['B']
+        input_A = data['ct']
+        input_B = data['dose']
 
-        if len(self.gpu_ids) > 0:
-            input_A = input_A.cuda(self.gpu_ids[0])
-            input_B = input_B.cuda(self.gpu_ids[0])
-
-        input_A = Variable(input_A)
-        input_B = Variable(input_B)
-
-        return input_A, input_B
+        return Variable(input_A), Variable(input_B)
 
     def forward(self, z):
         return self.generator(z)
 
     def training_step(self, batch, batch_id, optimizer_idx):
         real_A, real_B = self.get_inputs(batch)
+
+        real_A = real_A[0].permute(0, 4, 1, 2, 3).float()
+        real_B = real_B[0].permute(0, 4, 1, 2, 3).float()
         fake = self.forward(real_A)
 
         if optimizer_idx == 0:
@@ -79,11 +79,11 @@ class Pix2PixModel(pl.LightningModule):
     def backward_G(self, fake, real_A, real_B):
         """Calculate GAN and L1 loss for the generator"""
         # First, G(A) should fake the discriminator
-        fake_AB = torch.cat((self.real_A, self.fake_B), 1)
+        fake_AB = torch.cat((real_A, fake), 1)
         pred_fake = self.discriminator(fake_AB)
         loss_G_GAN = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
-        loss_G_L1 = self.criterionL1(self.fake_B, self.real_B) * self.opt.lambda_L1
+        loss_G_L1 = self.criterionL1(fake, real_B) * self.opt.lambda_A
         # combine loss and calculate gradients
         loss_G = loss_G_GAN + loss_G_L1
 
@@ -107,10 +107,17 @@ class Pix2PixModel(pl.LightningModule):
         return [opt_g, opt_d], [sched_g, sched_d]
 
     def train_dataloader(self):
-        dataset = CreateDataset(self.opt)
+        primary_directory = '/Users/mkazi/repos/python_projects/pytorch'
+        sys.path.insert(0, primary_directory)
+
+        # Define parent directory
+        training_data_dir = '{}/train-pats'.format(primary_directory)
+
+        # Prepare the data directory
+        plan_paths = get_paths(training_data_dir, ext='')  # gets the path of each plan's directory
+        num_train_pats = np.minimum(100, len(plan_paths))  # number of plans that will be used to train model
+        training_paths = plan_paths[:num_train_pats]  # list of training plans
+
+        dataset = KBPDataset(training_paths)
         # Torch Dataloader combines a dataset and sampler, provides settings.
-        return torch.utils.data.DataLoader(
-            dataset,  # dataset class
-            batch_size=self.opt.batchSize,  # how many samples/batch to load
-            shuffle=not self.opt.serial_batches,  # reshuffle per epoch
-            num_workers=int(self.opt.nThreads))
+        return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
