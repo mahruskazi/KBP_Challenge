@@ -5,7 +5,7 @@ import torch
 
 class BaseOptions():
     def __init__(self):
-        self.parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        self.parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter, fromfile_prefix_chars='@')
         self.initialized = False
 
     def initialize(self):
@@ -169,10 +169,13 @@ class BaseOptions():
 
         self.initialized = True
 
-    def parse(self):
+    def parse(self, args=None):
         if not self.initialized:
             self.initialize()
-        self.opt = self.parser.parse_args()
+        if args is None:
+            self.opt = self.parser.parse_args()
+        else:
+            self.opt = self.parser.parse_args(args)
         self.opt.isTrain = self.isTrain  # train or test
 
         str_ids = self.opt.gpu_ids.split(',')

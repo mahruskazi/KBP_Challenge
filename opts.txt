@@ -1,0 +1,5 @@
+--which_model_netG=unet_128_3d
+--which_direction=AtoB
+--batchSize=1
+--input_nc=1
+--lambda_A=100
