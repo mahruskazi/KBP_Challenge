@@ -19,7 +19,7 @@ class Pix2PixModel(pl.LightningModule):
     def __init__(self, opt, model_name='pix2pix_default', stage='training'):
         super(Pix2PixModel, self).__init__()
         self.opt = opt
-        self.gpu_ids = None
+        self.gpu_ids = opt.gpu_ids
         self.model_name = model_name
         self.stage = stage
 
@@ -30,8 +30,7 @@ class Pix2PixModel(pl.LightningModule):
         self.discriminator = networks.define_D(opt.input_nc + opt.output_nc, opt.ndf, opt.which_model_netD,
                                                opt.n_layers_D, opt.norm, use_sigmoid, opt.init_type)
 
-        tensor = torch.cuda.FloatTensor if self.gpu_ids else torch.Tensor
-        self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=tensor)
+        self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan)
         self.criterionL1 = torch.nn.L1Loss()
 
     def get_inputs(self, data):
@@ -127,7 +126,7 @@ class Pix2PixModel(pl.LightningModule):
 
         # Prepare the data directory
         plan_paths = get_paths(training_data_dir, ext='')  # gets the path of each plan's directory
-        num_train_pats = np.minimum(1, len(plan_paths))  # number of plans that will be used to train model
+        num_train_pats = np.minimum(100, len(plan_paths))  # number of plans that will be used to train model
         self.training_paths = plan_paths[:num_train_pats]  # list of training plans
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
@@ -146,7 +145,7 @@ class Pix2PixModel(pl.LightningModule):
 
         dose_pred_gy = self.generator(image)
         dose_pred_gy = dose_pred_gy.permute(0, 2, 3, 4, 1).float()
-        dose_pred_gy = dose_pred_gy * batch['possible_dose_mask'][0]
+        # dose_pred_gy = dose_pred_gy * batch['possible_dose_mask'][0]
         # Prepare the dose to save
         dose_pred_gy = np.squeeze(dose_pred_gy)
         dose_pred_gy = dose_pred_gy.numpy()

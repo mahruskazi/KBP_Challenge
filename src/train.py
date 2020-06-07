@@ -22,7 +22,7 @@ checkpoint_callback = ModelCheckpoint(
 )
 
 # model = Pix2PixModel(opt, stage='training')
-model = Pix2PixModel.load_from_checkpoint('/Users/mkazi/repos/python_projects/pytorch/checkpoints/epoch=0.ckpt', opt, stage='hold-out-tests')
+model = Pix2PixModel.load_from_checkpoint('/Users/mkazi/Downloads/_ckpt_epoch_1.ckpt', opt, stage='hold-out-tests')
 
 trainer = pl.Trainer(checkpoint_callback=checkpoint_callback, max_epochs=1)
 trainer.test(model)
