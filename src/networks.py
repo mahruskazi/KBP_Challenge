@@ -140,16 +140,11 @@ def define_G(input_nc,
              which_model_netG,
              norm='batch',
              use_dropout=False,
-             init_type='normal',
-             gpu_ids=[]):
+             init_type='normal'):
     ''' Parses model parameters and defines the Generator module.
     '''
     netG = None
-    use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
-
-    if use_gpu:
-        assert (torch.cuda.is_available())
 
     if which_model_netG == 'resnet_9blocks':
         netG = ResnetGenerator(
@@ -158,8 +153,7 @@ def define_G(input_nc,
             ngf,
             norm_layer=norm_layer,
             use_dropout=use_dropout,
-            n_blocks=9,
-            gpu_ids=gpu_ids)
+            n_blocks=9)
     elif which_model_netG == 'resnet_6blocks':
         netG = ResnetGenerator(
             input_nc,
@@ -167,8 +161,7 @@ def define_G(input_nc,
             ngf,
             norm_layer=norm_layer,
             use_dropout=use_dropout,
-            n_blocks=6,
-            gpu_ids=gpu_ids)
+            n_blocks=6)
     elif which_model_netG == 'unet_128':
         netG = UnetGenerator(
             input_nc,
@@ -176,8 +169,7 @@ def define_G(input_nc,
             7,
             ngf,
             norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            gpu_ids=gpu_ids)
+            use_dropout=use_dropout)
     elif which_model_netG == 'unet_256':
         netG = UnetGenerator(
             input_nc,
@@ -185,8 +177,7 @@ def define_G(input_nc,
             8,
             ngf,
             norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            gpu_ids=gpu_ids)
+            use_dropout=use_dropout)
     elif which_model_netG == 'unet_64_3d':
         netG = UnetGenerator(
             input_nc,
@@ -214,14 +205,12 @@ def define_G(input_nc,
             7,
             ngf,
             norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            gpu_ids=gpu_ids)
+            use_dropout=use_dropout)
     else:
         raise NotImplementedError(
             'Generator model name [{}] is not recognized'.format(
                 which_model_netG))
-    if len(gpu_ids) > 0:
-        netG.cuda(gpu_ids[0])
+
     init_weights(netG, init_type=init_type)
     return netG
 
@@ -233,16 +222,11 @@ def define_W(input_nc,
              which_model_netW,
              norm='batch',
              use_dropout=False,
-             init_type='normal',
-             gpu_ids=[]):
+             init_type='normal'):
     ''' Parses model parameters and defines the Generator module.
     '''
     netW = None
-    use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
-
-    if use_gpu:
-        assert (torch.cuda.is_available())
 
     if which_model_netW == 'resnet_temp':
         netW = ResnetBeamletGenerator(
@@ -253,14 +237,12 @@ def define_W(input_nc,
             padding_type='zero',
             norm_layer=norm_layer,
             use_dropout=use_dropout,
-            n_blocks=3,  # used to be 9
-            gpu_ids=gpu_ids)
+            n_blocks=3)
     else:
         raise NotImplementedError(
             'Weight Generator model name [{}] is not recognized'.format(
                 which_model_netW))
-    if len(gpu_ids) > 0:
-        netW.cuda(gpu_ids[0])
+
     init_weights(netW, init_type=init_type)
     return netW
 
@@ -271,39 +253,32 @@ def define_D(input_nc,
              n_layers_D=3,
              norm='batch',
              use_sigmoid=False,
-             init_type='normal',
-             gpu_ids=[]):
+             init_type='normal'):
     ''' Parses model parameters and defines the Discriminator module.
     '''
     netD = None
-    use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
 
-    if use_gpu:
-        assert (torch.cuda.is_available())
     if which_model_netD == 'basic':
         netD = NLayerDiscriminator(
             input_nc,
             ndf,
             n_layers=3,
             norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid,
-            gpu_ids=gpu_ids)
+            use_sigmoid=use_sigmoid)
     elif which_model_netD == 'n_layers':
         netD = NLayerDiscriminator(
             input_nc,
             ndf,
             n_layers_D,
             norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid,
-            gpu_ids=gpu_ids)
+            use_sigmoid=use_sigmoid)
     elif which_model_netD == 'pixel':
         netD = PixelDiscriminator(
             input_nc,
             ndf,
             norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid,
-            gpu_ids=gpu_ids)
+            use_sigmoid=use_sigmoid)
     elif which_model_netD == 'n_layers_3d':
         netD = NLayerDiscriminator(
             input_nc,
@@ -311,7 +286,6 @@ def define_D(input_nc,
             n_layers_D,
             norm_layer=norm_layer,
             use_sigmoid=use_sigmoid,
-            gpu_ids=gpu_ids,
             conv=nn.Conv3d)
     elif which_model_netD == 'voxel':
         netD = PixelDiscriminator(
@@ -319,15 +293,12 @@ def define_D(input_nc,
             ndf,
             norm_layer=norm_layer,
             use_sigmoid=use_sigmoid,
-            gpu_ids=gpu_ids,
             conv=nn.Conv3d)
     else:
         raise NotImplementedError(
             'Discriminator model name [{}] is not recognized'.format(
                 which_model_netD))
 
-    if use_gpu:
-        netD.cuda(gpu_ids[0])
     init_weights(netD, init_type=init_type)
     return netD
 
@@ -456,7 +427,6 @@ class ResnetBeamletGenerator(nn.Module):
                  norm_layer=nn.BatchNorm3d,
                  use_dropout=False,
                  n_blocks=6,
-                 gpu_ids=[],
                  padding_type='reflect',
                  conv=nn.Conv3d):
         assert (n_blocks >= 0)
@@ -466,7 +436,6 @@ class ResnetBeamletGenerator(nn.Module):
         self.input_nc = input_nc
         # self.output_nc = output_nc
         self.nwf = nwf
-        self.gpu_ids = gpu_ids
         # bias only if we're doing instance normalization
         if type(norm_layer) == functools.partial:
             use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
@@ -527,10 +496,6 @@ class ResnetBeamletGenerator(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, input):
-        # if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-        #     return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        # else:
-        #    return self.model(input)
         return self.model(input)
 
 
@@ -572,7 +537,6 @@ class ResnetGenerator(nn.Module):
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
                  n_blocks=6,
-                 gpu_ids=[],
                  padding_type='reflect'):
         assert (n_blocks >= 0)
         super(ResnetGenerator, self).__init__()
@@ -580,7 +544,6 @@ class ResnetGenerator(nn.Module):
         self.input_nc = input_nc
         self.output_nc = output_nc
         self.ngf = ngf
-        self.gpu_ids = gpu_ids
         # bias only if we're doing instance normalization
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
@@ -651,10 +614,7 @@ class ResnetGenerator(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        self.model(input)
 
 
 class ResnetBlock(nn.Module):
@@ -802,7 +762,6 @@ class UnetGenerator(nn.Module):
                  ngf=64,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
-                 gpu_ids=[],
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         '''
@@ -810,7 +769,6 @@ class UnetGenerator(nn.Module):
             num_downs:  number of downsamplings in the Unet.
         '''
         super(UnetGenerator, self).__init__()
-        self.gpu_ids = gpu_ids
 
         # blocks are built recursively starting from innermost moving out
         unet_block = UnetSkipConnectionBlock(
@@ -869,10 +827,7 @@ class UnetGenerator(nn.Module):
         self.model = unet_block
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        self.model(input)
 
 
 class UnetSkipConnectionBlock(nn.Module):
@@ -1001,10 +956,8 @@ class NLayerDiscriminator(nn.Module):
                  n_layers=3,
                  norm_layer=nn.BatchNorm2d,
                  use_sigmoid=False,
-                 gpu_ids=[],
                  conv=nn.Conv2d):
         super(NLayerDiscriminator, self).__init__()
-        self.gpu_ids = gpu_ids
         if type(norm_layer) == functools.partial:
             use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
                 norm_layer.func == nn.InstanceNorm3d)
@@ -1049,11 +1002,7 @@ class NLayerDiscriminator(nn.Module):
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
-        if len(self.gpu_ids) and isinstance(input.data,
-                                            torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        self.model(input)
 
 
 class PixelDiscriminator(nn.Module):
@@ -1073,10 +1022,8 @@ class PixelDiscriminator(nn.Module):
                  ndf=64,
                  norm_layer=nn.BatchNorm2d,
                  use_sigmoid=False,
-                 gpu_ids=[],
                  conv=nn.Conv2d):
         super(PixelDiscriminator, self).__init__()
-        self.gpu_ids = gpu_ids
         if type(norm_layer) == functools.partial:
             use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
                 norm_layer.func == nn.InstanceNorm3d)
@@ -1105,11 +1052,7 @@ class PixelDiscriminator(nn.Module):
         self.net = nn.Sequential(*self.net)
 
     def forward(self, input):
-        if len(self.gpu_ids) and isinstance(input.data,
-                                            torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        self.model(input)
 
 
 class UnetCNNGenerator(nn.Module):
@@ -1168,7 +1111,6 @@ class UnetCNNGenerator(nn.Module):
                  ngf=64,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
-                 gpu_ids=[],
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         '''
@@ -1176,7 +1118,6 @@ class UnetCNNGenerator(nn.Module):
             num_downs:  number of downsamplings in the Unet.
         '''
         super(UnetCNNGenerator, self).__init__()
-        self.gpu_ids = gpu_ids
 
         # blocks are built recursively starting from innermost moving out
         unet_block = UnetSkipConnectionBlock(
@@ -1235,7 +1176,4 @@ class UnetCNNGenerator(nn.Module):
         self.model = unet_block
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        self.model(input)
