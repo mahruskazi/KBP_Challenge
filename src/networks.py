@@ -821,6 +821,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
+            use_tanh=False,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)
@@ -846,6 +847,7 @@ class UnetSkipConnectionBlock(nn.Module):
                  innermost=False,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
+                 use_tanh=True
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         super(UnetSkipConnectionBlock, self).__init__()
@@ -881,7 +883,10 @@ class UnetSkipConnectionBlock(nn.Module):
             upconv = deconv(
                 inner_nc * 2, outer_nc, kernel_size=4, stride=2, padding=1)
             down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
+            if use_tanh:
+                up = [uprelu, upconv, nn.Tanh()]
+            else:
+                up = [uprelu, upconv]
             model = down + [submodule] + up
         elif innermost:
             # LeakyReLU -> Conv2d

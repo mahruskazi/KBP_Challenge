@@ -21,14 +21,14 @@ class Pix2PixModel(pl.LightningModule):
         self.stage = stage
         self.dataset_directory = dataset_directory
 
-        self.generator = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.which_model_netG,
-                                           opt.norm, not opt.no_dropout, opt.init_type)
+        self.generator = networks.define_G(self.opt.input_nc, self.opt.output_nc, self.opt.ngf, self.opt.which_model_netG,
+                                           self.opt.norm, not self.opt.no_dropout, self.opt.init_type)
 
-        use_sigmoid = opt.no_lsgan
-        self.discriminator = networks.define_D(opt.input_nc + opt.output_nc, opt.ndf, opt.which_model_netD,
-                                               opt.n_layers_D, opt.norm, use_sigmoid, opt.init_type)
+        use_sigmoid = self.opt.no_lsgan
+        self.discriminator = networks.define_D(self.opt.input_nc + self.opt.output_nc, self.opt.ndf, self.opt.which_model_netD,
+                                               self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
 
-        self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan)
+        self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
         self.criterionL1 = torch.nn.L1Loss()
 
     def get_inputs(self, data):
@@ -131,7 +131,7 @@ class Pix2PixModel(pl.LightningModule):
         dataset = KBPDataset(self.training_paths)
         print("Number of patients: %d" % len(dataset))
         # Torch Dataloader combines a dataset and sampler, provides settings.
-        return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True, num_workers=0)
+        return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
 
     # ---------------------- TEST_STEP ---------------------- #
     def test_step(self, batch, batch_id):
@@ -155,4 +155,4 @@ class Pix2PixModel(pl.LightningModule):
     def test_dataloader(self):
         dataset = KBPDataset(self.hold_out_paths)
         # Torch Dataloader combines a dataset and sampler, provides settings.
-        return DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+        return DataLoader(dataset, batch_size=1, shuffle=False)
