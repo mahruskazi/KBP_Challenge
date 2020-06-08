@@ -348,20 +348,19 @@ class GANLoss(nn.Module):
     def __init__(self,
                  use_lsgan=True,
                  target_real_label=1.0,
-                 target_fake_label=0.0,
-                 tensor=torch.FloatTensor):
+                 target_fake_label=0.0):
         super(GANLoss, self).__init__()
         self.real_label = target_real_label
         self.fake_label = target_fake_label
         self.real_label_var = None
         self.fake_label_var = None
-        self.Tensor = tensor
+
         if use_lsgan:
             self.loss = nn.MSELoss()  # mean squared error
         else:
             self.loss = nn.BCELoss()  # binary cross entropy
 
-    def get_target_tensor(self, input, target_is_real):
+    def get_target_tensor(self, input_data, target_is_real):
         ''' Loss function needs 2 inputs, an 'input' and a target tensor. If
         the target is real, then create a 'target tensor' filled with real
         label (1.0) everywhere. If the target is false, then create a 'target
@@ -370,24 +369,26 @@ class GANLoss(nn.Module):
         '''
         target_tensor = None
         if target_is_real:
-            create_label = ((self.real_label_var is None) or (self.real_label_var.numel() != input.numel()))
+            create_label = ((self.real_label_var is None) or (self.real_label_var.numel() != input_data.numel()))
             if create_label:
-                real_tensor = self.Tensor(input.size()).fill_(self.real_label)
+                real_tensor = torch.Tensor(input_data.size()).fill_(self.real_label)
+                real_tensor = real_tensor.type_as(input_data)
                 self.real_label_var = Variable(
                     real_tensor, requires_grad=False)
             target_tensor = self.real_label_var
         else:
-            create_label = ((self.fake_label_var is None) or (self.fake_label_var.numel() != input.numel()))
+            create_label = ((self.fake_label_var is None) or (self.fake_label_var.numel() != input_data.numel()))
             if create_label:
-                fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
+                fake_tensor = torch.Tensor(input_data.size()).fill_(self.fake_label)
+                fake_tensor = fake_tensor.type_as(input_data)
                 self.fake_label_var = Variable(
                     fake_tensor, requires_grad=False)
             target_tensor = self.fake_label_var
         return target_tensor
 
-    def __call__(self, input, target_is_real):
-        target_tensor = self.get_target_tensor(input, target_is_real)
-        return self.loss(input, target_tensor)
+    def __call__(self, input_data, target_is_real):
+        target_tensor = self.get_target_tensor(input_data, target_is_real)
+        return self.loss(input_data, target_tensor)
 
 
 class ResnetBeamletGenerator(nn.Module):
@@ -826,8 +827,8 @@ class UnetGenerator(nn.Module):
 
         self.model = unet_block
 
-    def forward(self, input):
-        self.model(input)
+    def forward(self, input_data):
+        return self.model(input_data)
 
 
 class UnetSkipConnectionBlock(nn.Module):
@@ -1001,8 +1002,8 @@ class NLayerDiscriminator(nn.Module):
             sequence += [nn.Sigmoid()]
         self.model = nn.Sequential(*sequence)
 
-    def forward(self, input):
-        self.model(input)
+    def forward(self, input_data):
+        return self.model(input_data)
 
 
 class PixelDiscriminator(nn.Module):
@@ -1051,8 +1052,8 @@ class PixelDiscriminator(nn.Module):
 
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, input):
-        self.model(input)
+    def forward(self, input_data):
+        return self.model(input_data)
 
 
 class UnetCNNGenerator(nn.Module):
@@ -1175,5 +1176,6 @@ class UnetCNNGenerator(nn.Module):
 
         self.model = unet_block
 
-    def forward(self, input):
-        self.model(input)
+    def forward(self, input_data):
+        return self.model(input_data)
+
