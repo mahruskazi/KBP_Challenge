@@ -847,7 +847,7 @@ class UnetSkipConnectionBlock(nn.Module):
                  innermost=False,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
-                 use_tanh=True
+                 use_tanh=True,
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         super(UnetSkipConnectionBlock, self).__init__()

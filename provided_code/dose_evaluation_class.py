@@ -44,18 +44,13 @@ class EvaluateDose:
         """Calculate a table of
         :return: the DVH score and dose score for the "new_dose" relative to the "reference_dose"
         """
-        num_batches = self.data_loader.number_of_batches()
+        num_batches = len(self.data_loader)
         dose_score_vec = np.zeros(num_batches)
 
         # Only make calculations if data_loader is not empty
         if not self.data_loader.file_paths_list:
             print('No patient information was given to calculate metrics')
         else:
-            # Change batch size to 1
-            self.data_loader.batch_size = 1  # Loads data related to ground truth patient information
-            if self.dose_loader is not None:
-                self.dose_loader.batch_size = 1  # Loads data related to ground truth patient information
-
             for idx in tqdm.tqdm(range(num_batches)):
                 # Get roi masks for patient
                 self.get_constant_patient_features(idx)
@@ -87,7 +82,7 @@ class EvaluateDose:
         :return: a flattened dose tensor
         """
         # Load the dose for the request patient
-        dose_batch = data_loader.get_batch(patient_list=self.patient_list)
+        dose_batch = data_loader.get_item_from_list(self.patient_list)
         dose_key = [key for key in dose_batch.keys() if 'dose' in key.lower()][0]  # The name of the dose
         dose_tensor = dose_batch[dose_key][0]  # Dose tensor
         return dose_tensor.flatten()
@@ -97,7 +92,7 @@ class EvaluateDose:
         :param idx: the index for the batch to be loaded
         """
         # Load the batch of roi mask
-        rois_batch = self.data_loader.get_batch(idx)
+        rois_batch = self.data_loader[idx]
         self.roi_mask = rois_batch['structure_masks'][0].astype(bool)
         # Save the patient list to keep track of the patient id
         self.patient_list = rois_batch['patient_list']

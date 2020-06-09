@@ -128,7 +128,7 @@ class Pix2PixModel(pl.LightningModule):
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
     def train_dataloader(self):
-        dataset = KBPDataset(self.training_paths)
+        dataset = KBPDataset(self.training_paths, mode_name='training_model')
         print("Number of patients: %d" % len(dataset))
         # Torch Dataloader combines a dataset and sampler, provides settings.
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
@@ -136,7 +136,7 @@ class Pix2PixModel(pl.LightningModule):
     # ---------------------- TEST_STEP ---------------------- #
     def test_step(self, batch, batch_id):
         # Get patient ID and make a prediction
-        pat_id = batch['patient_list'][0]
+        pat_id = np.squeeze(batch['patient_list'])
         image = Variable(batch['ct'])
         image = image[0].permute(0, 4, 1, 2, 3).float()
 
@@ -149,10 +149,9 @@ class Pix2PixModel(pl.LightningModule):
         dose_to_save = sparse_vector_function(dose_pred_gy)
         dose_df = pd.DataFrame(data=dose_to_save['data'].squeeze(), index=dose_to_save['indices'].squeeze(), columns=['data'])
         file_name = '{}/{}.csv'.format(self.prediction_dir, pat_id)
-        print("Saving: " + file_name)
         dose_df.to_csv(file_name)
 
     def test_dataloader(self):
-        dataset = KBPDataset(self.hold_out_paths)
+        dataset = KBPDataset(self.hold_out_paths, mode_name='dose_prediction')
         # Torch Dataloader combines a dataset and sampler, provides settings.
         return DataLoader(dataset, batch_size=1, shuffle=False)

@@ -58,8 +58,6 @@ class KBPDataset(Dataset):
                                    # Mask of where dose can be deposited
                                    'voxel_dimensions': (3,)  # Physical dimensions (in mm) of voxels
                                    }
-            print('Warning: Batch size has been changed to 1 for dose prediction mode')
-
         elif mode_name == 'predicted_dose':
             # This mode loads a single feature (e.g., dose, masks for all structures)
             self.required_files = {mode_name: (self.patient_shape + (1,))}  # The shape of a dose tensor
@@ -71,8 +69,6 @@ class KBPDataset(Dataset):
                                    'voxel_dimensions': (3,),  # Physical dimensions (in mm) of voxels
                                    'possible_dose_mask': (self.patient_shape + (1,)),
                                    }
-            print('Warning: Batch size has been changed to 1 for evaluation mode')
-
         else:
             print('Mode does not exist. Please re-run with either \'training_model\', \'prediction\', '
                   '\'predicted_dose\', or \'evaluation\'')
@@ -163,16 +159,21 @@ class KBPDataset(Dataset):
 
         return shuffled_indices
 
+    def get_item_from_list(self, patient_list):
+        indices = self.patient_to_index(patient_list)
+
+        # Make a list of files to be loaded
+        file_paths_to_load = [self.file_paths_list[k] for k in indices]
+
+        # Load the requested files as a tensors
+        loaded_data = self.load_data(file_paths_to_load)
+        return loaded_data
+
     def __len__(self):
         return len(self.file_paths_list)
 
     def __getitem__(self, idx):
-        if self.patient_list is None:
-            # Generate batch based on the provided index
-            indices = self.indices[idx:(idx + 1)]
-        else:
-            # Generate batch based on the request patients
-            indices = self.patient_to_index(self.patient_list)
+        indices = self.indices[idx:(idx + 1)]
 
         # Make a list of files to be loaded
         file_paths_to_load = [self.file_paths_list[k] for k in indices]
