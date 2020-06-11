@@ -11,7 +11,7 @@ args = ['--which_model_netG', 'unet_128_3d',
         '--lambda_A', '100']
 opt = TrainOptions().parse(args)
 
-checkpoint_number = 19
+checkpoint_number = 74
 checkpoint_file = '{}/checkpoints/epoch={}.ckpt'.format(primary_directory, checkpoint_number)
 # checkpoint_file = '{}/checkpoints/test.ckpt'.format(primary_directory)
 dataset_dir = '{}/data'.format(primary_directory)
