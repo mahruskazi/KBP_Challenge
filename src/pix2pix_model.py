@@ -1,6 +1,5 @@
 import torch
 from torch.autograd import Variable
-from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import numpy as np
@@ -49,11 +48,19 @@ class Pix2PixModel(pl.LightningModule):
         fake = self.forward(real_A)
 
         if optimizer_idx == 0:
-            loss = self.backward_G(fake, real_A, real_B)
-            tqdm_dict = {'g_loss': loss}
+            loss, loss_G_GAN, loss_G_L1 = self.backward_G(fake, real_A, real_B)
+            tqdm_dict = {
+                'g_loss': loss,
+                'loss_G_GAN': loss_G_GAN,
+                'loss_G_L1': loss_G_L1
+            }
         elif optimizer_idx == 1:
-            loss = self.backward_D(fake, real_A, real_B)
-            tqdm_dict = {'d_loss': loss}
+            loss, loss_D_fake, loss_D_real = self.backward_D(fake, real_A, real_B)
+            tqdm_dict = {
+                'd_loss': loss,
+                'loss_D_fake': loss_D_fake,
+                'loss_D_real': loss_D_real
+            }
         else:
             raise Exception("Invalid optimizer ID")
 
@@ -77,20 +84,21 @@ class Pix2PixModel(pl.LightningModule):
         # combine loss and calculate gradients
         loss_D = (loss_D_fake + loss_D_real) * 0.5
 
-        return loss_D
+        return loss_D, loss_D_fake, loss_D_real
 
     def backward_G(self, fake, real_A, real_B):
         """Calculate GAN and L1 loss for the generator"""
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((real_A, fake), 1)
-        pred_fake = self.discriminator(fake_AB)
+        with torch.no_grad():  # D requires no gradients when optimizing G
+            pred_fake = self.discriminator(fake_AB)
         loss_G_GAN = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
         loss_G_L1 = self.criterionL1(fake, real_B) * self.opt.lambda_A
         # combine loss and calculate gradients
         loss_G = loss_G_GAN + loss_G_L1
 
-        return loss_G
+        return loss_G, loss_G_GAN, loss_G_L1
 
     def configure_optimizers(self):
         beta2 = 0.999
@@ -98,8 +106,16 @@ class Pix2PixModel(pl.LightningModule):
         opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
         opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
-        sched_g = networks.get_scheduler(opt_g, self.opt)
-        sched_d = networks.get_scheduler(opt_d, self.opt)
+        sched_g = {
+            'scheduler': networks.get_scheduler(opt_g, self.opt),
+            'monitor': 'loss',
+            'name': 'generator_lr'
+        }
+        sched_d = {
+            'scheduler': networks.get_scheduler(opt_d, self.opt),
+            'monitor': 'loss',
+            'name': 'discriminator_lr'
+        }
 
         return [opt_g, opt_d], [sched_g, sched_d]
 
@@ -123,7 +139,7 @@ class Pix2PixModel(pl.LightningModule):
 
     def train_dataloader(self):
         dataset = KBPDataset(self.training_paths, mode_name='training_model')
-        print("Number of patients: %d" % len(dataset))
+        print("Number of training patients: %d" % len(dataset))
         # Torch Dataloader combines a dataset and sampler, provides settings.
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
 
@@ -137,9 +153,10 @@ class Pix2PixModel(pl.LightningModule):
         image = Variable(batch['ct'])
         image = image[..., 0].float()
 
-        dose_pred_gy = self.generator(image)
-        dose_pred_gy = dose_pred_gy.permute(0, 2, 3, 4, 1).float()
-        dose_pred_gy = dose_pred_gy * batch['possible_dose_mask'][0]
+        generated = self.generator(image)
+        dose_pred_gy = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        dose_pred_gy = dose_pred_gy.view(1, 1, 128, 128, 128, 1)
+        dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
         dose_pred_gy = np.squeeze(dose_pred_gy)
         dose_pred_gy = dose_pred_gy.cpu().numpy()
@@ -161,7 +178,6 @@ class Pix2PixModel(pl.LightningModule):
         return output
 
     def validation_epoch_end(self, outputs):
-        print("Calculating scores...")
         dose_files = []
         pred_files = []
 
@@ -188,10 +204,12 @@ class Pix2PixModel(pl.LightningModule):
                 'dose_score': dose_score
             }
         print(results)
+        self.logger.experiment.log_metrics(results)
         return results
 
     def val_dataloader(self):
         dataset = KBPDataset(self.hold_out_paths, mode_name='dose_prediction')
+        print("Number of validation patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=1, shuffle=False)
 
     # ---------------------- TEST_STEP ---------------------- #

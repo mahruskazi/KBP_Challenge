@@ -79,9 +79,14 @@ def sparse_vector_function(x, indices=None):
     """
     if indices is None:
         # y = {'data': x[x > 0], 'indices': np.nonzero(x.flatten())[-1]}
-        y = {'data': x[x > 0], 'indices': np.where(x.flatten()>0)[0]}
+        y = {'data': x[x > 0], 'indices': np.where(x.flatten() > 0)[0]}
     else:
         y = {'data': x[x > 0], 'indices': indices[x > 0]}
+
+    # Ensure there is atleast one item in the sparse vector
+    if len(y['data']) <= 1:
+        y = {'data': np.array([1, 1]), 'indices': np.array([1, 2])}
+
     return y
 
 

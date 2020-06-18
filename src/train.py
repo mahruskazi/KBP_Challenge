@@ -20,7 +20,7 @@ args = ['--batchSize', '8',
         '--lambda_A', '100',
         '--lr_policy', 'step',
         '--epoch_count', '1',
-        '--lr_decay_iters', '1']
+        '--lr_decay_iters', '100']
 
 opt = TrainOptions().parse(args)
 

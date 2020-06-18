@@ -126,7 +126,13 @@ def get_scheduler(optimizer, opt):
             optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
+            optimizer, mode='min', factor=0.9, threshold=0.01, patience=3)
+    elif opt.lr_policy == 'cyclic':
+        scheduler = lr_scheduler.CyclicLR(optimizer,
+                                          base_lr=opt.lr,
+                                          max_lr=0.01,
+                                          step_size_up=10,
+                                          cycle_momentum=False)
     else:
         return NotImplementedError(
             'learning rate policy [{}] is not implemented'.format(
@@ -821,7 +827,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
-            use_tanh=False,
+            use_tanh=True,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)

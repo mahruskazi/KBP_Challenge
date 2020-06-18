@@ -11,11 +11,11 @@ args = ['--which_model_netG', 'unet_128_3d',
         '--lambda_A', '100']
 opt = TrainOptions().parse(args)
 
-checkpoint_number = 74
+checkpoint_number = 0
 checkpoint_file = '{}/checkpoints/epoch={}.ckpt'.format(primary_directory, checkpoint_number)
 # checkpoint_file = '{}/checkpoints/test.ckpt'.format(primary_directory)
 dataset_dir = '{}/data'.format(primary_directory)
-model = Pix2PixModel.load_from_checkpoint(checkpoint_file, opt, dataset_dir, stage='hold-out-tests')
+model = Pix2PixModel.load_from_checkpoint('/Users/mkazi/Downloads/epoch=33.ckpt', opt, dataset_dir, stage='hold-out-tests')
 
 # print(model.state_dict())
 
