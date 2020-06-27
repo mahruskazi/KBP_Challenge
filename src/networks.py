@@ -4,6 +4,7 @@ from torch.nn import init
 import functools
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
+from torchvision import models
 
 #
 # Functions
@@ -126,12 +127,12 @@ def get_scheduler(optimizer, opt):
             optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.9, threshold=0.01, patience=3)
+            optimizer, mode='min', factor=0.9, threshold=0.01, patience=5)
     elif opt.lr_policy == 'cyclic':
         scheduler = lr_scheduler.CyclicLR(optimizer,
                                           base_lr=opt.lr,
                                           max_lr=0.01,
-                                          step_size_up=10,
+                                          step_size_up=30,
                                           cycle_momentum=False)
     else:
         return NotImplementedError(
@@ -395,6 +396,22 @@ class GANLoss(nn.Module):
     def __call__(self, input_data, target_is_real):
         target_tensor = self.get_target_tensor(input_data, target_is_real)
         return self.loss(input_data, target_tensor)
+
+
+# Perceptual loss that uses a pretrained VGG network
+class VGGLoss(nn.Module):
+    def __init__(self):
+        super(VGGLoss, self).__init__()
+        self.vgg = models.vgg19(pretrained=True)
+        self.criterion = nn.L1Loss()
+        self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
+
+    def forward(self, x, y):
+        x_vgg, y_vgg = self.vgg(x), self.vgg(y)
+        loss = 0
+        for i in range(len(x_vgg)):
+            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
+        return loss
 
 
 class ResnetBeamletGenerator(nn.Module):
@@ -827,7 +844,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
-            use_tanh=True,
+            use_tanh=False,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)

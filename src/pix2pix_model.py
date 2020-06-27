@@ -29,6 +29,9 @@ class Pix2PixModel(pl.LightningModule):
                                                self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
 
         self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
+        # if not self.opt.no_vgg_loss:
+        #     self.criterionVGG = networks.VGGLoss()
+
         self.criterionL1 = torch.nn.L1Loss()
 
     def get_inputs(self, data):
@@ -41,21 +44,16 @@ class Pix2PixModel(pl.LightningModule):
         return self.generator(z)
 
     def training_step(self, batch, batch_id, optimizer_idx):
-        real_A, real_B = self.get_inputs(batch)  # Returns tensors of size torch.Size([batch_size, 1, 128, 128, 128, 1])
-        real_A = real_A[..., 0].float()
-        real_B = real_B[..., 0].float()
+        ct_image, dose = self.get_inputs(batch)  # Returns tensors of size torch.Size([batch_size, 1, 128, 128, 128, 1])
+        ct_image = ct_image[..., 0].float()
+        dose = dose[..., 0].float()
 
-        fake = self.forward(real_A)
+        fake = self.forward(ct_image)
 
         if optimizer_idx == 0:
-            loss, loss_G_GAN, loss_G_L1 = self.backward_G(fake, real_A, real_B)
-            tqdm_dict = {
-                'g_loss': loss,
-                'loss_G_GAN': loss_G_GAN,
-                'loss_G_L1': loss_G_L1
-            }
+            loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
         elif optimizer_idx == 1:
-            loss, loss_D_fake, loss_D_real = self.backward_D(fake, real_A, real_B)
+            loss, loss_D_fake, loss_D_real = self.backward_D(fake, ct_image, dose)
             tqdm_dict = {
                 'd_loss': loss,
                 'loss_D_fake': loss_D_fake,
@@ -87,18 +85,25 @@ class Pix2PixModel(pl.LightningModule):
         return loss_D, loss_D_fake, loss_D_real
 
     def backward_G(self, fake, real_A, real_B):
-        """Calculate GAN and L1 loss for the generator"""
+        """Calculate GAN, L1 and VGG loss for the generator"""
+        G_losses = {}
+
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((real_A, fake), 1)
         with torch.no_grad():  # D requires no gradients when optimizing G
             pred_fake = self.discriminator(fake_AB)
-        loss_G_GAN = self.criterionGAN(pred_fake, True)
+        G_losses['loss_G_GAN'] = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
-        loss_G_L1 = self.criterionL1(fake, real_B) * self.opt.lambda_A
-        # combine loss and calculate gradients
-        loss_G = loss_G_GAN + loss_G_L1
+        G_losses['loss_G_L1'] = self.criterionL1(fake, real_B) * self.opt.lambda_A
 
-        return loss_G, loss_G_GAN, loss_G_L1
+        # if not self.opt.no_vgg_loss:
+        #     G_losses['vgg_G_loss'] = self.criterionVGG(fake, real_B) * self.opt.lambda_vgg
+
+        # combine loss and calculate gradients
+        loss_G = sum(G_losses.values()).mean()
+        G_losses['g_loss'] = loss_G
+
+        return loss_G, G_losses
 
     def configure_optimizers(self):
         beta2 = 0.999
@@ -154,8 +159,8 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        dose_pred_gy = 40.0*generated + 40.0  # Scale back dose to 0 - 80
-        dose_pred_gy = dose_pred_gy.view(1, 1, 128, 128, 128, 1)
+        # dose_pred_gy = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
         dose_pred_gy = np.squeeze(dose_pred_gy)
