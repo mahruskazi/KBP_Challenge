@@ -142,7 +142,10 @@ class KBPDataset(Dataset):
             elif key == 'voxel_dimensions':
                 shaped_data[key] = loaded_file[key]
             else:  # Files with shape
-                np.put(shaped_data[key], loaded_file[key]['indices'], loaded_file[key]['data'])
+                indices = np.array(loaded_file[key]['indices'])
+                data = np.array(loaded_file[key]['data'])
+
+                np.put(shaped_data[key], indices.astype(np.int64), data.astype(np.int64))
                 if key == 'ct':
                     shaped_data[key] = 2.0*shaped_data[key].clip(None, 4071)  # /4071.0 - 1.0
                 # if key == 'dose' and self.mode_name != 'evaluation':

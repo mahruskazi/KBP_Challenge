@@ -1,5 +1,5 @@
-from options.train_options import TrainOptions
-from src.pix2pix_model import Pix2PixModel
+from src.options.train_options import TrainOptions
+from src.models.pix2pix_model import Pix2PixModel
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
@@ -14,18 +14,23 @@ checkpoint_callback = ModelCheckpoint(
 )
 
 args = ['--batchSize', '8',
-        '--which_model_netG', 'unet_128_3d',
+        '--primary_directory', primary_directory,
+        '--which_model_netG', 'pretrained_resnet',
+        '--resnet_depth', '50',
         '--which_direction', 'AtoB',
         '--input_nc', '1',
         '--lambda_A', '100',
-        '--lr_policy', 'step',
-        '--epoch_count', '1',
-        '--lr_decay_iters', '100']
+        '--lr_policy', 'plateau',
+        '--epoch_count', '100',
+        '--load_epoch', '-1',
+        '--lr_decay_iters', '15000',
+        '--lr', '0.01']
 
 opt = TrainOptions().parse(args)
 
 dataset_dir = '{}/data'.format(primary_directory)
-model = Pix2PixModel(opt, dataset_dir, stage='training')
+model = Pix2PixModel(opt, stage='training')
+# print(model)
 
 # trainer = pl.Trainer(gpus=0, checkpoint_callback=checkpoint_callback, max_epochs=opt.epoch_count)
 # checkpoint = '{}/best.ckpt'.format(checkpoints_dir)

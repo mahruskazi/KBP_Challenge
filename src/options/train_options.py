@@ -133,5 +133,10 @@ class TrainOptions(BaseOptions):
             help='The number of images used for training')
         self.parser.add_argument('--lambda_vgg', type=float, default=10.0, help='weight for vgg loss')
         self.parser.add_argument('--no_vgg_loss', action='store_true', help='if specified, do *not* use VGG feature matching loss')
+        self.parser.add_argument(
+            '--resnet_depth',
+            type=int,
+            default=50,
+            help='Pretrained resnet depth: 18|50')
 
         self.isTrain = True

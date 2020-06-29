@@ -1,8 +1,12 @@
-from src.kbp_dataset import KBPDataset
+from src.dataloaders.kbp_dataset import KBPDataset
 from torch.utils.data import DataLoader
 from provided_code.general_functions import get_paths
 import numpy as np
 from tqdm import tqdm
+from torch.autograd import Variable
+from src.models import networks
+from src.options.train_options import TrainOptions
+
 
 primary_directory = '/Users/mkazi/Google Drive/KBP_Challenge'
 
@@ -19,14 +23,33 @@ dataset = KBPDataset(plan_paths)
 
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-max_val = 0.0
-for _, batch in enumerate(tqdm(loader)):
-# for batch in loader:
-    arr = batch['ct'].flatten().numpy()
+args = ['--batchSize', '8',
+        '--primary_directory', primary_directory,
+        '--which_model_netG', 'pretrained_resnet',
+        '--resnet_depth', '50',
+        '--which_direction', 'AtoB',
+        '--input_nc', '1',
+        '--lambda_A', '100',
+        '--lr_policy', 'plateau',
+        '--epoch_count', '100',
+        '--load_epoch', '-1',
+        '--lr_decay_iters', '15000',
+        '--lr', '0.01']
 
-    # cond = arr<0
-    # if np.any(cond):
-    #     print(batch['patient_list'])
-    if np.amax(arr) > max_val:
-        max_val = np.amax(arr)
-print(max_val)
+opt = TrainOptions().parse(args)
+
+generator = networks.define_G(opt)
+# print(generator)
+
+# print(pretrained_model)
+
+for i, batch in enumerate(tqdm(loader)):
+    input_A = Variable(batch['ct'])
+    input_A = input_A[..., 0].float()
+
+    # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
+    # print(image_3_channel.size())
+
+    output = generator(input_A)
+    print(output.size())
+    break

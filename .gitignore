@@ -8,3 +8,4 @@ validation-pats-no-dose/
 results/
 checkpoints/
 .DS_Store
+pretrained_models/

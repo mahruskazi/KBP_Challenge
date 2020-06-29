@@ -5,6 +5,8 @@ import functools
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import models
+from src.models import resnet3d
+import copy
 
 #
 # Functions
@@ -141,84 +143,29 @@ def get_scheduler(optimizer, opt):
     return scheduler
 
 
-def define_G(input_nc,
-             output_nc,
-             ngf,
-             which_model_netG,
-             norm='batch',
-             use_dropout=False,
-             init_type='normal'):
+def define_G(opt):
     ''' Parses model parameters and defines the Generator module.
     '''
     netG = None
-    norm_layer = get_norm_layer(norm_type=norm)
+    norm_layer = get_norm_layer(norm_type=opt.norm)
 
-    if which_model_netG == 'resnet_9blocks':
-        netG = ResnetGenerator(
-            input_nc,
-            output_nc,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            n_blocks=9)
-    elif which_model_netG == 'resnet_6blocks':
-        netG = ResnetGenerator(
-            input_nc,
-            output_nc,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            n_blocks=6)
-    elif which_model_netG == 'unet_128':
+    if opt.which_model_netG == 'pretrained_resnet':
+        netG = ResnetGenerator(opt)
+    elif opt.which_model_netG == 'unet_128_3d':
         netG = UnetGenerator(
-            input_nc,
-            output_nc,
+            opt.input_nc,
+            opt.output_nc,
             7,
-            ngf,
+            opt.ngf,
             norm_layer=norm_layer,
-            use_dropout=use_dropout)
-    elif which_model_netG == 'unet_256':
-        netG = UnetGenerator(
-            input_nc,
-            output_nc,
-            8,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout)
-    elif which_model_netG == 'unet_64_3d':
-        netG = UnetGenerator(
-            input_nc,
-            output_nc,
-            6,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout,
+            use_dropout=(not opt.use_dropout),
             conv=nn.Conv3d,
             deconv=nn.ConvTranspose3d)
-    elif which_model_netG == 'unet_128_3d':
-        netG = UnetGenerator(
-            input_nc,
-            output_nc,
-            7,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            conv=nn.Conv3d,
-            deconv=nn.ConvTranspose3d)
-    elif which_model_netG == 'unet_cnn':
-        netG = UnetCNNGenerator(
-            input_nc,
-            output_nc,
-            7,
-            ngf,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout)
     else:
         raise NotImplementedError(
-            'Generator model name [{}] is not recognized'.format(
-                which_model_netG))
+            'Generator model name [{}] is not recognized'.format(opt.which_model_netG))
 
-    init_weights(netG, init_type=init_type)
+    init_weights(netG, init_type=opt.init_type)
     return netG
 
 
@@ -524,210 +471,87 @@ class ResnetBeamletGenerator(nn.Module):
 
 
 class ResnetGenerator(nn.Module):
-    ''' Defines a generator comprised of Resnet blocks between a few down-
-    sampling/upsampling operations. Code and idea originally from Justin
-    Johnson's architecture. https://github.com/jcjohnson/fast-neural-style/
 
-    Init:
-        - Reflection Pad: 3px on all sides
-        - Conv2d: input -> 64 channels, 7x7 kernels, no padding
-        - Normalize -> ReLU
-
-    Downsample:
-        - Conv2d: 64 -> 128 channels, 3x3 kernels, 2 stride, 1 padding
-        - Normalize -> ReLU
-        - Conv2d: 128 -> 256 channels, 3x3 kernels, 2 stride, 1 padding
-        - Normalize -> ReLU
-
-    Resnet: (x n_blocks)
-        - Resnet: 256 -> 256 channels (Conv -> ReLU -> Conv -> ReLU + x)
-
-    Upsample:
-        - Deconv2d: 256 -> 128 channels, 3x3 kernels, 2 stride, 1 padding
-        - Normalize -> ReLU
-        - Deconv2d: 128 -> 64 channels, 3x3 kernels, 2 stride, 1 padding
-        - Normalize -> ReLU
-
-    Out:
-        - Reflection Pad: 3px on all sides
-        - Conv2d: 64 -> output channels, 7x7 kernels, no padding
-        - Tanh
-    '''
-
-    def __init__(self,
-                 input_nc,
-                 output_nc,
-                 ngf=64,
-                 norm_layer=nn.BatchNorm2d,
-                 use_dropout=False,
-                 n_blocks=6,
-                 padding_type='reflect'):
-        assert (n_blocks >= 0)
+    def __init__(self, opt):
         super(ResnetGenerator, self).__init__()
-        # input and output number of channels
-        self.input_nc = input_nc
-        self.output_nc = output_nc
-        self.ngf = ngf
-        # bias only if we're doing instance normalization
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
+
+        model = resnet3d.generate_model(model_depth=opt.resnet_depth,
+                                        n_classes=700,
+                                        n_input_channels=3,
+                                        shortcut_type='B',
+                                        conv1_t_size=7,
+                                        conv1_t_stride=1,
+                                        no_max_pool=False,
+                                        widen_factor=1.0)
+
+        path = '{}/pretrained_models/r3d{}_K_200ep.pth'.format(opt.primary_directory, opt.resnet_depth)
+        pretrained_model = self._load_pretrained_model(model, path, 'resnet', 400)
+        modules = list(pretrained_model.children())[:-2]
+
+        # input_conv = nn.Conv3d(1,
+        #                        3,
+        #                        kernel_size=4,
+        #                        stride=2,
+        #                        padding=1,
+        #                        bias=False)
+
+        orig_model = nn.Sequential(*modules)
+        for p in orig_model.parameters():
+            p.requires_grad = False
+
+        end_layers = []
+
+        uprelu = nn.ReLU(inplace=False)
+
+        if opt.resnet_depth == 18:
+            in_channels = 512
+        elif opt.resnet_depth == 50:
+            in_channels = 2048
         else:
-            use_bias = norm_layer == nn.InstanceNorm2d
+            raise Exception('Not valid resnet depth: %d' % (opt.resnet_depth))
+        upconv1 = nn.ConvTranspose3d(in_channels,
+                                     256,
+                                     kernel_size=4,
+                                     stride=2,
+                                     padding=1,
+                                     bias=False)
+        upnorm1 = nn.BatchNorm3d(256)
 
-        # ReflectionPad2D: take each image and pad it with 3px on all sides
-        # Conv2d: outs 64 channels with 7x7 kernels
-        # norm_layer: 2-D batch norm on all 64 channels
-        # RelU: ReLU on
-        model = [
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
-            norm_layer(ngf),
-            nn.ReLU(True)
-        ]
+        end_layers += [uprelu, upconv1, upnorm1]
 
-        n_downsampling = 2
-        for i in range(n_downsampling):
-            mult = 2**i  # mult = 1, 2
-            # add 128, and 256 channels with 3x3 kernels
-            # 2=D bach norm on all 128, then 256 channels
-            # ReLU after each channel
-            model += [
-                nn.Conv2d(
-                    ngf * mult,
-                    ngf * mult * 2,
-                    kernel_size=3,
-                    stride=2,
-                    padding=1,
-                    bias=use_bias),
-                norm_layer(ngf * mult * 2),
-                nn.ReLU(True)
-            ]
+        upconv2 = nn.ConvTranspose3d(256,
+                                     256,
+                                     kernel_size=4,
+                                     stride=2,
+                                     padding=1,
+                                     bias=False)
+        upnorm2 = nn.BatchNorm3d(256)
 
-        mult = 2**n_downsampling  # 4
-        for i in range(n_blocks):  # default 6
-            # Add resnet block
-            model += [
-                ResnetBlock(
-                    ngf * mult,
-                    padding_type=padding_type,
-                    norm_layer=norm_layer,
-                    use_dropout=use_dropout,
-                    use_bias=use_bias)
-            ]
+        end_layers += [copy.deepcopy(uprelu), upconv2, upnorm2]
+        end_layers += [copy.deepcopy(uprelu), copy.deepcopy(upconv2)]
 
-        for i in range(n_downsampling):
-            mult = 2**(n_downsampling - i)
-            model += [
-                nn.ConvTranspose2d(
-                    ngf * mult,
-                    int(ngf * mult / 2),
-                    kernel_size=3,
-                    stride=2,
-                    padding=1,
-                    output_padding=1,
-                    bias=use_bias),
-                norm_layer(int(ngf * mult / 2)),
-                nn.ReLU(True)
-            ]
-        model += [
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0),
-            nn.Tanh()
-        ]
-
-        self.model = nn.Sequential(*model)
+        self.model = nn.Sequential(orig_model, nn.Sequential(*end_layers))
 
     def forward(self, input):
-        self.model(input)
+        three_channel = input.repeat(1, 3, 1, 1, 1)
+        output = self.model(three_channel)
+        print(output.size())
+        batch_size = output.size()[0]
+        return output.view(batch_size, 1, 128, 128, 128)
 
+    def _load_pretrained_model(self, model, pretrain_path, model_name, n_finetune_classes):
+        if pretrain_path:
+            print('loading pretrained model {}'.format(pretrain_path))
+            pretrain = torch.load(pretrain_path, map_location='cpu')
 
-class ResnetBlock(nn.Module):
-    ''' Resnets reduce the vanishing gradient problem. The block is structured:
-
-        x -> Conv -> ReLU -> Conv -> out + x
-
-    Effectively, the input x is added back at the output (see self.forward()).
-    Each Conv block is 3x3 kernels with fixed dimension input and output
-    channels.
-    '''
-
-    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias, conv=nn.Conv2d):
-        super(ResnetBlock, self).__init__()
-        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer,
-                                                use_dropout, use_bias, conv)
-
-    def build_conv_block(self,
-                         dim,
-                         padding_type,
-                         norm_layer,
-                         use_dropout,
-                         use_bias,
-                         conv):
-        assert (conv == nn.Conv2d or conv == nn.Conv3d)
-        conv_block = []
-        p = 0
-        # add 1px padding to input
-        if conv == nn.Conv2d:
-            if padding_type == 'reflect':
-                conv_block += [nn.ReflectionPad2d(1)]
-            elif padding_type == 'replicate':
-                conv_block += [nn.ReplicationPad2d(1)]
-            elif padding_type == 'zero':
-                p = 1
+            model.load_state_dict(pretrain['state_dict'])
+            tmp_model = model
+            if model_name == 'densenet':
+                tmp_model.classifier = nn.Linear(tmp_model.classifier.in_features, n_finetune_classes)
             else:
-                raise NotImplementedError(
-                    'padding [{}] is not implemented'.format(padding_type))
-        else:  # not implementing replicationpad
-            if padding_type == 'reflect':
-                conv_block += [ReflectionPad3d(1)]
-            elif padding_type == 'zero':
-                p = 1
-            else:
-                raise NotImplementedError(
-                    'padding [{}] is not implemented'.format(padding_type))
+                tmp_model.fc = nn.Linear(tmp_model.fc.in_features, n_finetune_classes)
 
-        # 2d conv, same number of output channels as input, 3x3 kernels
-        # Then batch normalize and RelU, and dropout if needed
-        conv_block += [
-            conv(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-            norm_layer(dim),
-            nn.ReLU(True)
-        ]
-        if use_dropout:
-            conv_block += [nn.Dropout(0.5)]
-
-        p = 0
-        if conv == nn.Conv2d:
-            if padding_type == 'reflect':
-                conv_block += [nn.ReflectionPad2d(1)]
-            elif padding_type == 'replicate':
-                conv_block += [nn.ReplicationPad2d(1)]
-            elif padding_type == 'zero':
-                p = 1
-            else:
-                raise NotImplementedError(
-                    'padding [{}] is not implemented'.format(padding_type))
-        else:  # not implementing replicationpad
-            if padding_type == 'reflect':
-                conv_block += [ReflectionPad3d(1)]
-            elif padding_type == 'zero':
-                p = 1
-            else:
-                raise NotImplementedError(
-                    'padding [{}] is not implemented'.format(padding_type))
-
-        # 2d conv, same number of output channels as input 3x3 kernels, then
-        # batch normalize
-        conv_block += [
-            conv(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-            norm_layer(dim)
-        ]
-
-        return nn.Sequential(*conv_block)
-
-    def forward(self, x):
-        out = x + self.conv_block(x)
-        return out
+        return model
 
 
 class UnetGenerator(nn.Module):

@@ -1,5 +1,5 @@
 import pytorch_lightning as pl
-from src.pix2pix_model import Pix2PixModel
+from models.pix2pix_model import Pix2PixModel
 from options.train_options import TrainOptions
 
 primary_directory = '/Users/mkazi/Google Drive/KBP_Challenge'
@@ -18,6 +18,6 @@ dataset_dir = '{}/data'.format(primary_directory)
 model = Pix2PixModel.load_from_checkpoint('/Users/mkazi/Downloads/epoch=33.ckpt', opt, dataset_dir, stage='hold-out-tests')
 
 # print(model.state_dict())
-
-trainer = pl.Trainer(max_epochs=1)
-trainer.test(model)
+print(model)
+# trainer = pl.Trainer(max_epochs=1)
+# trainer.test(model)
