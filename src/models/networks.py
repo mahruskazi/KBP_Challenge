@@ -129,12 +129,12 @@ def get_scheduler(optimizer, opt):
             optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.9, threshold=0.01, patience=5)
+            optimizer, mode='min', factor=0.9, threshold=0.01, patience=10)
     elif opt.lr_policy == 'cyclic':
         scheduler = lr_scheduler.CyclicLR(optimizer,
                                           base_lr=opt.lr,
-                                          max_lr=0.01,
-                                          step_size_up=30,
+                                          max_lr=0.001,
+                                          step_size_up=15,
                                           cycle_momentum=False)
     else:
         return NotImplementedError(
@@ -495,9 +495,9 @@ class ResnetGenerator(nn.Module):
         #                        padding=1,
         #                        bias=False)
 
-        orig_model = nn.Sequential(*modules)
-        for p in orig_model.parameters():
-            p.requires_grad = False
+        self.resnet = nn.Sequential(*modules)
+        for param in self.resnet.parameters():
+            param.requires_grad = False
 
         end_layers = []
 
@@ -527,15 +527,13 @@ class ResnetGenerator(nn.Module):
                                      bias=False)
         upnorm2 = nn.BatchNorm3d(256)
 
-        end_layers += [copy.deepcopy(uprelu), upconv2, upnorm2]
-        end_layers += [copy.deepcopy(uprelu), copy.deepcopy(upconv2)]
-
-        self.model = nn.Sequential(orig_model, nn.Sequential(*end_layers))
+        end_layers += [copy.deepcopy(uprelu), upconv2, nn.Tanh()]
+        # end_layers += [copy.deepcopy(uprelu), copy.deepcopy(upconv2)]
+        self.up_sample = nn.Sequential(*end_layers)
 
     def forward(self, input):
         three_channel = input.repeat(1, 3, 1, 1, 1)
-        output = self.model(three_channel)
-        print(output.size())
+        output = self.up_sample(self.resnet(three_channel))
         batch_size = output.size()[0]
         return output.view(batch_size, 1, 128, 128, 128)
 

@@ -51,12 +51,7 @@ class Pix2PixModel(pl.LightningModule):
         if optimizer_idx == 0:
             loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
         elif optimizer_idx == 1:
-            loss, loss_D_fake, loss_D_real = self.backward_D(fake, ct_image, dose)
-            tqdm_dict = {
-                'd_loss': loss,
-                'loss_D_fake': loss_D_fake,
-                'loss_D_real': loss_D_real
-            }
+            loss, tqdm_dict = self.backward_D(fake, ct_image, dose)
         else:
             raise Exception("Invalid optimizer ID")
 
@@ -69,18 +64,21 @@ class Pix2PixModel(pl.LightningModule):
 
     def backward_D(self, fake, real_A, real_B):
         """Calculate GAN loss for the discriminator"""
+        D_losses = {}
+
         # Fake; stop backprop to the generator by detaching fake_B
         fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
         pred_fake = self.discriminator(fake_AB.detach())
-        loss_D_fake = self.criterionGAN(pred_fake, False)
+        D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, False)
         # Real
         real_AB = torch.cat((real_A, real_B), 1)
         pred_real = self.discriminator(real_AB)
-        loss_D_real = self.criterionGAN(pred_real, True)
+        D_losses['loss_D_real'] = self.criterionGAN(pred_real, True)
         # combine loss and calculate gradients
-        loss_D = (loss_D_fake + loss_D_real) * 0.5
+        loss_D = sum(D_losses.values()).mean()
+        D_losses['loss_D'] = loss_D
 
-        return loss_D, loss_D_fake, loss_D_real
+        return loss_D, D_losses
 
     def backward_G(self, fake, real_A, real_B):
         """Calculate GAN, L1 and VGG loss for the generator"""
@@ -98,7 +96,7 @@ class Pix2PixModel(pl.LightningModule):
         #     G_losses['vgg_G_loss'] = self.criterionVGG(fake, real_B) * self.opt.lambda_vgg
 
         # combine loss and calculate gradients
-        loss_G = sum(G_losses.values()).mean()
+        loss_G = G_losses['loss_G_GAN'] + G_losses['loss_G_L1']
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
@@ -109,18 +107,21 @@ class Pix2PixModel(pl.LightningModule):
         opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
         opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
-        sched_g = {
-            'scheduler': networks.get_scheduler(opt_g, self.opt),
-            'monitor': 'loss',
-            'name': 'generator_lr'
-        }
-        sched_d = {
-            'scheduler': networks.get_scheduler(opt_d, self.opt),
-            'monitor': 'loss',
-            'name': 'discriminator_lr'
-        }
+        schedulers = []
+        if self.opt.lr_policy != 'none':
+            sched_g = {
+                'scheduler': networks.get_scheduler(opt_g, self.opt),
+                'monitor': 'loss',
+                'name': 'generator_lr'
+            }
+            sched_d = {
+                'scheduler': networks.get_scheduler(opt_d, self.opt),
+                'monitor': 'loss',
+                'name': 'discriminator_lr'
+            }
+            schedulers = [sched_g, sched_d]
 
-        return [opt_g, opt_d], [sched_g, sched_d]
+        return [opt_g, opt_d], schedulers
 
     def prepare_data(self):
         # Define parent directory
@@ -158,7 +159,7 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        # dose_pred_gy = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
