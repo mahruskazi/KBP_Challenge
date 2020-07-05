@@ -155,7 +155,7 @@ def define_G(opt):
     use_dropout = not opt.no_dropout
 
     if opt.which_model_netG == 'pretrained_resnet':
-        netG = ResnetGenerator(opt)
+        netG = ResNetUNet(opt)
     elif opt.which_model_netG == 'unet_128_3d':
         netG = UnetGenerator(
             opt.input_nc,
@@ -814,78 +814,92 @@ class UnetSkipConnectionBlock(nn.Module):
 
 
 class ResNetUNet(nn.Module):
-    def __init__(self):
+    def __init__(self, opt):
         super().__init__()
 
-        pretrain_path = '/Users/mkazi/Google Drive/KBP_Challenge/pretrained_models/resnet_34_23dataset.pth'
-        self.base_model = resnet3d.resnet34(sample_input_W=128,
-                                            sample_input_H=128,
-                                            sample_input_D=128,
-                                            shortcut_type='A',
-                                            no_cuda=True,
-                                            num_seg_classes=2)
+        pretrain_path = '{}/pretrained_models/resnet_34_23dataset.pth'.format(opt.primary_directory)
+        no_cuda = not torch.cuda.is_available()
+
+        resnet = resnet3d.resnet34(sample_input_W=128,
+                                   sample_input_H=128,
+                                   sample_input_D=128,
+                                   shortcut_type='A',
+                                   no_cuda=no_cuda,
+                                   num_seg_classes=2)
 
         pretrain = torch.load(pretrain_path, map_location='cpu')
 
         from collections import OrderedDict
         new_state_dict = OrderedDict()
         for k, v in pretrain['state_dict'].items():
-            name = k[7:] # remove `module.`
+            name = k[7:]  # remove `module.`
             new_state_dict[name] = v
 
-        self.base_model.load_state_dict(new_state_dict)
-        self.base_layers = list(self.base_model.children())
+        resnet.load_state_dict(new_state_dict)
+        for param in resnet.parameters():
+            param.requires_grad = False
 
-        self.layer0 = nn.Sequential(*self.base_layers[:3]) # size=(N, 64, x.H/2, x.W/2)
-        self.layer0_1x1 = self._convrelu(64, 64, 1, 0)
-        self.layer1 = nn.Sequential(*self.base_layers[3:5]) # size=(N, 64, x.H/4, x.W/4)
-        self.layer1_1x1 = self._convrelu(64, 64, 1, 0)
-        self.layer2 = self.base_layers[5]  # size=(N, 128, x.H/8, x.W/8)
-        self.layer2_1x1 = self._convrelu(128, 128, 1, 0)
-        self.layer3 = self.base_layers[6]  # size=(N, 256, x.H/16, x.W/16)
-        self.layer3_1x1 = self._convrelu(256, 256, 1, 0)
-        self.layer4 = self.base_layers[7]  # size=(N, 512, x.H/32, x.W/32)
-        self.layer4_1x1 = self._convrelu(512, 512, 1, 0)
+        self.base_layers = list(resnet.children())
 
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.unet_layer0 = nn.Sequential(*self.base_layers[:3])
+        self.unet_layer0_1x1 = self._convrelu(64, 64, 1, 0)
+        self.unet_layer1 = nn.Sequential(*self.base_layers[3:5])
+        self.unet_layer1_1x1 = self._convrelu(64, 64, 1, 0)
+        self.unet_layer2 = self.base_layers[5]
+        self.unet_layer2_1x1 = self._convrelu(128, 128, 1, 0)
+        self.unet_layer3 = self.base_layers[6]
+        self.unet_layer3_1x1 = self._convrelu(256, 256, 1, 0)
+        self.unet_layer4 = self.base_layers[7]
+        self.unet_layer4_1x1 = self._convrelu(512, 512, 1, 0)
+
+        self.upsample = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
         self.conv_up3 = self._convrelu(256 + 512, 512, 3, 1)
         self.conv_up2 = self._convrelu(128 + 512, 256, 3, 1)
         self.conv_up1 = self._convrelu(64 + 256, 256, 3, 1)
         self.conv_up0 = self._convrelu(64 + 256, 128, 3, 1)
 
-        self.conv_original_size0 = self._convrelu(3, 64, 3, 1)
-        self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
+        self.conv_original_size0 = self._convrelu(1, 64, 3, 1)
+        # self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
         self.conv_original_size2 = self._convrelu(64 + 128, 64, 3, 1)
+
+        self.conv_last = nn.Conv3d(64, 1, 1)
 
     def forward(self, input):
         x_original = self.conv_original_size0(input)
-        x_original = self.conv_original_size1(x_original)
+        # x_original = self.conv_original_size1(x_original)
 
-        layer0 = self.layer0(input)
-        layer1 = self.layer1(layer0)
-        layer2 = self.layer2(layer1)
-        layer3 = self.layer3(layer2)
-        layer4 = self.layer4(layer3)
+        layer0 = self.unet_layer0(input)
+        layer1 = self.unet_layer1(layer0)
+        layer2 = self.unet_layer2(layer1)
+        layer3 = self.unet_layer3(layer2)
+        layer4 = self.unet_layer4(layer3)
 
-        layer4 = self.layer4_1x1(layer4)
-        x = self.upsample(layer4)
-        layer3 = self.layer3_1x1(layer3)
-        x = torch.cat([x, layer3], dim=1)
+        """
+        torch.Size([1, 1, 128, 128, 128])
+        torch.Size([1, 64, 64, 64, 64])
+        torch.Size([1, 64, 32, 32, 32])
+        torch.Size([1, 128, 16, 16, 16])
+        torch.Size([1, 256, 16, 16, 16])
+        torch.Size([1, 512, 16, 16, 16])
+        """
+
+        layer4 = self.unet_layer4_1x1(layer4)
+        layer3 = self.unet_layer3_1x1(layer3)
+        x = torch.cat([layer4, layer3], dim=1)
         x = self.conv_up3(x)
 
-        x = self.upsample(x)
-        layer2 = self.layer2_1x1(layer2)
+        layer2 = self.unet_layer2_1x1(layer2)
         x = torch.cat([x, layer2], dim=1)
         x = self.conv_up2(x)
 
         x = self.upsample(x)
-        layer1 = self.layer1_1x1(layer1)
+        layer1 = self.unet_layer1_1x1(layer1)
         x = torch.cat([x, layer1], dim=1)
         x = self.conv_up1(x)
 
         x = self.upsample(x)
-        layer0 = self.layer0_1x1(layer0)
+        layer0 = self.unet_layer0_1x1(layer0)
         x = torch.cat([x, layer0], dim=1)
         x = self.conv_up0(x)
 
@@ -893,7 +907,9 @@ class ResNetUNet(nn.Module):
         x = torch.cat([x, x_original], dim=1)
         x = self.conv_original_size2(x)
 
-        return x
+        output = self.conv_last(x)
+
+        return output
 
     def _convrelu(self, in_channels, out_channels, kernel, padding):
         return nn.Sequential(

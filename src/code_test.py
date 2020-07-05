@@ -39,33 +39,9 @@ args = ['--batchSize', '8',
 
 opt = TrainOptions().parse(args)
 
-pretrain_path = '/Users/mkazi/Google Drive/KBP_Challenge/pretrained_models/resnet_34_23dataset.pth'
-model = resnet3d.resnet34(sample_input_W=128,
-                          sample_input_H=128,
-                          sample_input_D=128,
-                          shortcut_type='A',
-                          no_cuda=True,
-                          num_seg_classes=2)
+model = networks.ResNetUNet()
 
-pretrain = torch.load(pretrain_path, map_location='cpu')
-
-from collections import OrderedDict
-new_state_dict = OrderedDict()
-for k, v in pretrain['state_dict'].items():
-    name = k[7:] # remove `module.`
-    # print(name)
-    new_state_dict[name] = v
-# load params
-# print(new_state_dict.keys())
-model.load_state_dict(new_state_dict)
-# for param in model.parameters():
-#     print(param)
-# model.load_state_dict(pretrain['state_dict'])
-
-# generator = networks.define_G(opt)
-# print(pretrain['state_dict'].keys())
-
-print(model)
+# print(model)
 
 for i, batch in enumerate(tqdm(loader)):
     input_A = Variable(batch['ct'])
