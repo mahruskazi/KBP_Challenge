@@ -136,6 +136,10 @@ def get_scheduler(optimizer, opt):
                                           max_lr=0.001,
                                           step_size_up=15,
                                           cycle_momentum=False)
+    elif opt.lr_policy == 'none':
+        def lambda_rule(epoch):
+            return 1.0
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_rule)
     else:
         return NotImplementedError(
             'learning rate policy [{}] is not implemented'.format(
@@ -148,6 +152,7 @@ def define_G(opt):
     '''
     netG = None
     norm_layer = get_norm_layer(norm_type=opt.norm)
+    use_dropout = not opt.no_dropout
 
     if opt.which_model_netG == 'pretrained_resnet':
         netG = ResnetGenerator(opt)
@@ -158,7 +163,7 @@ def define_G(opt):
             7,
             opt.ngf,
             norm_layer=norm_layer,
-            use_dropout=(not opt.use_dropout),
+            use_dropout=use_dropout,
             conv=nn.Conv3d,
             deconv=nn.ConvTranspose3d)
     else:
@@ -346,18 +351,48 @@ class GANLoss(nn.Module):
 
 
 # Perceptual loss that uses a pretrained VGG network
-class VGGLoss(nn.Module):
-    def __init__(self):
-        super(VGGLoss, self).__init__()
-        self.vgg = models.vgg19(pretrained=True)
+class PerceptualLoss(nn.Module):
+    def __init__(self, opt):
+        super(PerceptualLoss, self).__init__()
+
+        model = resnet3d.generate_model(model_depth=18,
+                                        n_classes=700,
+                                        n_input_channels=3,
+                                        shortcut_type='B',
+                                        conv1_t_size=7,
+                                        conv1_t_stride=1,
+                                        no_max_pool=False,
+                                        widen_factor=1.0)
+
+        path = '{}/pretrained_models/r3d18_K_200ep.pth'.format(opt.primary_directory)
+        pretrained_model = self._load_pretrained_model(model, path, 'resnet', 400)
+        modules = list(pretrained_model.children())[:-2]
+
+        self.model = nn.Sequential(*modules)
         self.criterion = nn.L1Loss()
-        self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
+        # self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
+
+    def _load_pretrained_model(self, model, pretrain_path, model_name, n_finetune_classes):
+        if pretrain_path:
+            print('loading pretrained model {}'.format(pretrain_path))
+            pretrain = torch.load(pretrain_path, map_location='cpu')
+
+            model.load_state_dict(pretrain['state_dict'])
+            tmp_model = model
+            if model_name == 'densenet':
+                tmp_model.classifier = nn.Linear(tmp_model.classifier.in_features, n_finetune_classes)
+            else:
+                tmp_model.fc = nn.Linear(tmp_model.fc.in_features, n_finetune_classes)
+
+        return model
 
     def forward(self, x, y):
-        x_vgg, y_vgg = self.vgg(x), self.vgg(y)
+        x = x.repeat(1, 3, 1, 1, 1)
+        y = y.repeat(1, 3, 1, 1, 1)
+        x_vgg, y_vgg = self.model(x), self.model(y)
         loss = 0
         for i in range(len(x_vgg)):
-            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
+            loss += self.criterion(x_vgg[i], y_vgg[i].detach())
         return loss
 
 

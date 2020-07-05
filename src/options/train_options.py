@@ -131,8 +131,8 @@ class TrainOptions(BaseOptions):
             type=int,
             default=100,
             help='The number of images used for training')
-        self.parser.add_argument('--lambda_vgg', type=float, default=10.0, help='weight for vgg loss')
-        self.parser.add_argument('--no_vgg_loss', action='store_true', help='if specified, do *not* use VGG feature matching loss')
+        self.parser.add_argument('--lambda_perceptual', type=float, default=10.0, help='weight for perceptual loss')
+        self.parser.add_argument('--no_perceptual_loss', action='store_true', help='if specified, do *not* use perceptual feature matching loss')
         self.parser.add_argument(
             '--resnet_depth',
             type=int,

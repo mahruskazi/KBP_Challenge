@@ -27,24 +27,22 @@ class Pix2PixModel(pl.LightningModule):
                                                self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
 
         self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
-        # if not self.opt.no_vgg_loss:
-        #     self.criterionVGG = networks.VGGLoss()
-
-        self.criterionL1 = torch.nn.L1Loss()
+        if self.opt.no_perceptual_loss:
+            self.criterionL1 = torch.nn.L1Loss()
+        else:
+            self.criterionP = networks.PerceptualLoss(self.opt)
 
     def get_inputs(self, data):
-        input_A = data['ct']
+        input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
         input_B = data['dose']
 
-        return Variable(input_A), Variable(input_B)
+        return Variable(input_A)[..., 0].float(), Variable(input_B)[..., 0].float()
 
     def forward(self, z):
         return self.generator(z)
 
     def training_step(self, batch, batch_id, optimizer_idx):
-        ct_image, dose = self.get_inputs(batch)  # Returns tensors of size torch.Size([batch_size, 1, 128, 128, 128, 1])
-        ct_image = ct_image[..., 0].float()
-        dose = dose[..., 0].float()
+        ct_image, dose = self.get_inputs(batch)
 
         fake = self.forward(ct_image)
 
@@ -90,13 +88,14 @@ class Pix2PixModel(pl.LightningModule):
             pred_fake = self.discriminator(fake_AB)
         G_losses['loss_G_GAN'] = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
-        G_losses['loss_G_L1'] = self.criterionL1(fake, real_B) * self.opt.lambda_A
 
-        # if not self.opt.no_vgg_loss:
-        #     G_losses['vgg_G_loss'] = self.criterionVGG(fake, real_B) * self.opt.lambda_vgg
+        if self.opt.no_perceptual_loss:
+            G_losses['loss_G_L1'] = self.criterionL1(fake, real_B) * self.opt.lambda_A
+        else:
+            G_losses['loss_G_perceptual'] = self.criterionP(fake, real_B) * self.opt.lambda_perceptual
 
         # combine loss and calculate gradients
-        loss_G = G_losses['loss_G_GAN'] + G_losses['loss_G_L1']
+        loss_G = sum(G_losses.values()).mean()
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
@@ -107,21 +106,18 @@ class Pix2PixModel(pl.LightningModule):
         opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
         opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
-        schedulers = []
-        if self.opt.lr_policy != 'none':
-            sched_g = {
-                'scheduler': networks.get_scheduler(opt_g, self.opt),
-                'monitor': 'loss',
-                'name': 'generator_lr'
-            }
-            sched_d = {
-                'scheduler': networks.get_scheduler(opt_d, self.opt),
-                'monitor': 'loss',
-                'name': 'discriminator_lr'
-            }
-            schedulers = [sched_g, sched_d]
+        sched_g = {
+            'scheduler': networks.get_scheduler(opt_g, self.opt),
+            'monitor': 'loss',
+            'name': 'generator_lr'
+        }
+        sched_d = {
+            'scheduler': networks.get_scheduler(opt_d, self.opt),
+            'monitor': 'loss',
+            'name': 'discriminator_lr'
+        }
 
-        return [opt_g, opt_d], schedulers
+        return [opt_g, opt_d], [sched_g, sched_d]
 
     def prepare_data(self):
         # Define parent directory
@@ -159,7 +155,7 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        # generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
