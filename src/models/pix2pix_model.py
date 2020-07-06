@@ -74,7 +74,7 @@ class Pix2PixModel(pl.LightningModule):
         D_losses['loss_D_real'] = self.criterionGAN(pred_real, True)
         # combine loss and calculate gradients
         loss_D = sum(D_losses.values()).mean()
-        D_losses['loss_D'] = loss_D
+        D_losses['d_loss'] = loss_D
 
         return loss_D, D_losses
 
@@ -95,7 +95,7 @@ class Pix2PixModel(pl.LightningModule):
             G_losses['loss_G_perceptual'] = self.criterionP(fake, real_B) * self.opt.lambda_perceptual
 
         # combine loss and calculate gradients
-        loss_G = sum(G_losses.values()).mean()
+        loss_G = sum(G_losses.values())
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
@@ -141,7 +141,6 @@ class Pix2PixModel(pl.LightningModule):
     def train_dataloader(self):
         dataset = KBPDataset(self.training_paths, mode_name='training_model')
         print("Number of training patients: %d" % len(dataset))
-        # Torch Dataloader combines a dataset and sampler, provides settings.
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
 
     def generate_csv(self, batch):
@@ -155,7 +154,7 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        # generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        # generated = 80.0*generated  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save

@@ -73,7 +73,7 @@ def weights_init_orthogonal(m):
 
 
 def init_weights(net, init_type='normal'):
-    print('initialization method [{}]'.format(init_type))
+    # print('initialization method [{}]'.format(init_type))
     if init_type == 'normal':
         net.apply(weights_init_normal)
     elif init_type == 'xavier':
@@ -129,7 +129,7 @@ def get_scheduler(optimizer, opt):
             optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.9, threshold=0.01, patience=10)
+            optimizer, mode='min', factor=0.9, threshold=0.01, patience=5)
     elif opt.lr_policy == 'cyclic':
         scheduler = lr_scheduler.CyclicLR(optimizer,
                                           base_lr=opt.lr,
@@ -166,11 +166,11 @@ def define_G(opt):
             use_dropout=use_dropout,
             conv=nn.Conv3d,
             deconv=nn.ConvTranspose3d)
+        init_weights(netG, init_type=opt.init_type)
     else:
         raise NotImplementedError(
             'Generator model name [{}] is not recognized'.format(opt.which_model_netG))
 
-    init_weights(netG, init_type=opt.init_type)
     return netG
 
 
@@ -505,89 +505,6 @@ class ResnetBeamletGenerator(nn.Module):
         return self.model(input)
 
 
-class ResnetGenerator(nn.Module):
-
-    def __init__(self, opt):
-        super(ResnetGenerator, self).__init__()
-
-        model = resnet3d.generate_model(model_depth=opt.resnet_depth,
-                                        n_classes=700,
-                                        n_input_channels=3,
-                                        shortcut_type='B',
-                                        conv1_t_size=7,
-                                        conv1_t_stride=1,
-                                        no_max_pool=False,
-                                        widen_factor=1.0)
-
-        # path = '{}/pretrained_models/r3d{}_K_200ep.pth'.format(opt.primary_directory, opt.resnet_depth)
-        path = '/Users/mkazi/Google Drive/KBP_Challenge/pretrained_models/resnet_34_23dataset.pth'
-        pretrained_model = self._load_pretrained_model(model, path, 'resnet', 400)
-        modules = list(pretrained_model.children())[:-2]
-
-        # input_conv = nn.Conv3d(1,
-        #                        3,
-        #                        kernel_size=4,
-        #                        stride=2,
-        #                        padding=1,
-        #                        bias=False)
-
-        self.resnet = nn.Sequential(*modules)
-        for param in self.resnet.parameters():
-            param.requires_grad = False
-
-        end_layers = []
-
-        uprelu = nn.ReLU(inplace=False)
-
-        if opt.resnet_depth == 18:
-            in_channels = 512
-        elif opt.resnet_depth == 50:
-            in_channels = 2048
-        else:
-            raise Exception('Not valid resnet depth: %d' % (opt.resnet_depth))
-        upconv1 = nn.ConvTranspose3d(in_channels,
-                                     256,
-                                     kernel_size=4,
-                                     stride=2,
-                                     padding=1,
-                                     bias=False)
-        upnorm1 = nn.BatchNorm3d(256)
-
-        end_layers += [uprelu, upconv1, upnorm1]
-
-        upconv2 = nn.ConvTranspose3d(256,
-                                     256,
-                                     kernel_size=4,
-                                     stride=2,
-                                     padding=1,
-                                     bias=False)
-        upnorm2 = nn.BatchNorm3d(256)
-
-        end_layers += [copy.deepcopy(uprelu), upconv2, nn.Tanh()]
-        # end_layers += [copy.deepcopy(uprelu), copy.deepcopy(upconv2)]
-        self.up_sample = nn.Sequential(*end_layers)
-
-    def forward(self, input):
-        three_channel = input.repeat(1, 3, 1, 1, 1)
-        output = self.up_sample(self.resnet(three_channel))
-        batch_size = output.size()[0]
-        return output.view(batch_size, 1, 128, 128, 128)
-
-    def _load_pretrained_model(self, model, pretrain_path, model_name, n_finetune_classes):
-        if pretrain_path:
-            print('loading pretrained model {}'.format(pretrain_path))
-            pretrain = torch.load(pretrain_path, map_location='cpu')
-
-            model.load_state_dict(pretrain['state_dict'])
-            tmp_model = model
-            if model_name == 'densenet':
-                tmp_model.classifier = nn.Linear(tmp_model.classifier.in_features, n_finetune_classes)
-            else:
-                tmp_model.fc = nn.Linear(tmp_model.fc.in_features, n_finetune_classes)
-
-        return model
-
-
 class UnetGenerator(nn.Module):
     ''' Defines the UNet generator architecture proposed in Isola et al.
     Architecture contains downsampling/upsampling operations, with Unet
@@ -817,15 +734,25 @@ class ResNetUNet(nn.Module):
     def __init__(self, opt):
         super().__init__()
 
-        pretrain_path = '{}/pretrained_models/resnet_34_23dataset.pth'.format(opt.primary_directory)
+        self.opt = opt
+        pretrain_path = '{}/pretrained_models/resnet_{}_23dataset.pth'.format(self.opt.primary_directory, self.opt.resnet_depth)
+        print('loading pretrained model {}'.format(pretrain_path))
         no_cuda = not torch.cuda.is_available()
 
-        resnet = resnet3d.resnet34(sample_input_W=128,
-                                   sample_input_H=128,
-                                   sample_input_D=128,
-                                   shortcut_type='A',
-                                   no_cuda=no_cuda,
-                                   num_seg_classes=2)
+        if opt.resnet_depth == 18:
+            resnet = resnet3d.resnet18(sample_input_W=128,
+                                       sample_input_H=128,
+                                       sample_input_D=128,
+                                       shortcut_type='A',
+                                       no_cuda=no_cuda,
+                                       num_seg_classes=2)
+        elif opt.resnet_depth == 34:
+            resnet = resnet3d.resnet34(sample_input_W=128,
+                                       sample_input_H=128,
+                                       sample_input_D=128,
+                                       shortcut_type='A',
+                                       no_cuda=no_cuda,
+                                       num_seg_classes=2)
 
         pretrain = torch.load(pretrain_path, map_location='cpu')
 
@@ -841,15 +768,16 @@ class ResNetUNet(nn.Module):
 
         self.base_layers = list(resnet.children())
 
-        self.unet_layer0 = nn.Sequential(*self.base_layers[:3])
+        self.resnet_layer0 = nn.Sequential(*self.base_layers[:3])
+        self.resnet_layer1 = nn.Sequential(*self.base_layers[3:5])
+        self.resnet_layer2 = self.base_layers[5]
+        self.resnet_layer3 = self.base_layers[6]
+        self.resnet_layer4 = self.base_layers[7]
+
         self.unet_layer0_1x1 = self._convrelu(64, 64, 1, 0)
-        self.unet_layer1 = nn.Sequential(*self.base_layers[3:5])
         self.unet_layer1_1x1 = self._convrelu(64, 64, 1, 0)
-        self.unet_layer2 = self.base_layers[5]
         self.unet_layer2_1x1 = self._convrelu(128, 128, 1, 0)
-        self.unet_layer3 = self.base_layers[6]
         self.unet_layer3_1x1 = self._convrelu(256, 256, 1, 0)
-        self.unet_layer4 = self.base_layers[7]
         self.unet_layer4_1x1 = self._convrelu(512, 512, 1, 0)
 
         self.upsample = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
@@ -860,28 +788,29 @@ class ResNetUNet(nn.Module):
         self.conv_up0 = self._convrelu(64 + 256, 128, 3, 1)
 
         self.conv_original_size0 = self._convrelu(1, 64, 3, 1)
-        # self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
+        self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
         self.conv_original_size2 = self._convrelu(64 + 128, 64, 3, 1)
 
         self.conv_last = nn.Conv3d(64, 1, 1)
+        init_weights(self.conv_last, init_type=self.opt.init_type)
+        # self.final_activation = nn.Tanh()
 
     def forward(self, input):
         x_original = self.conv_original_size0(input)
-        # x_original = self.conv_original_size1(x_original)
+        x_original = self.conv_original_size1(x_original)
 
-        layer0 = self.unet_layer0(input)
-        layer1 = self.unet_layer1(layer0)
-        layer2 = self.unet_layer2(layer1)
-        layer3 = self.unet_layer3(layer2)
-        layer4 = self.unet_layer4(layer3)
+        layer0 = self.resnet_layer0(input)
+        layer1 = self.resnet_layer1(layer0)
+        layer2 = self.resnet_layer2(layer1)
+        layer3 = self.resnet_layer3(layer2)
+        layer4 = self.resnet_layer4(layer3)
 
         """
-        torch.Size([1, 1, 128, 128, 128])
-        torch.Size([1, 64, 64, 64, 64])
-        torch.Size([1, 64, 32, 32, 32])
-        torch.Size([1, 128, 16, 16, 16])
-        torch.Size([1, 256, 16, 16, 16])
-        torch.Size([1, 512, 16, 16, 16])
+        layer0 => torch.Size([1, 64, 64, 64, 64])
+        layer1 => torch.Size([1, 64, 32, 32, 32])
+        layer2 => torch.Size([1, 128, 16, 16, 16])
+        layer3 => torch.Size([1, 256, 16, 16, 16])
+        layer4 => torch.Size([1, 512, 16, 16, 16])
         """
 
         layer4 = self.unet_layer4_1x1(layer4)
@@ -908,14 +837,17 @@ class ResNetUNet(nn.Module):
         x = self.conv_original_size2(x)
 
         output = self.conv_last(x)
+        # output = self.final_activation(output)*40.0 + 40.0
 
         return output
 
     def _convrelu(self, in_channels, out_channels, kernel, padding):
-        return nn.Sequential(
+        net = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel, padding=padding),
             nn.ReLU(inplace=True),
         )
+        init_weights(net, init_type=self.opt.init_type)
+        return net
 
 
 class NLayerDiscriminator(nn.Module):
