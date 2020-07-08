@@ -95,7 +95,7 @@ class Pix2PixModel(pl.LightningModule):
             G_losses['loss_G_perceptual'] = self.criterionP(fake, real_B) * self.opt.lambda_perceptual
 
         # combine loss and calculate gradients
-        loss_G = sum(G_losses.values())
+        loss_G = sum(G_losses.values()).mean()
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
@@ -154,7 +154,7 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        # generated = 80.0*generated  # Scale back dose to 0 - 80
+        generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save

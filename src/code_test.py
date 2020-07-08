@@ -28,7 +28,7 @@ loader = DataLoader(dataset, batch_size=1, shuffle=False)
 args = ['--batchSize', '8',
         '--primary_directory', primary_directory,
         '--which_model_netG', 'pretrained_resnet',
-        '--resnet_depth', '18',
+        '--resnet_depth', '34',
         '--which_direction', 'AtoB',
         '--input_nc', '1',
         '--lambda_A', '100',
@@ -42,7 +42,9 @@ opt = TrainOptions().parse(args)
 
 model = networks.ResNetUNet(opt)
 
-# print(model)
+# for param in model.parameters():
+#     print(param.requires_grad)
+print(model)
 # summary(model, (1, 128, 128, 128))
 
 # for i, batch in enumerate(tqdm(loader)):

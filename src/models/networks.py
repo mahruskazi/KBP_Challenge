@@ -133,8 +133,8 @@ def get_scheduler(optimizer, opt):
     elif opt.lr_policy == 'cyclic':
         scheduler = lr_scheduler.CyclicLR(optimizer,
                                           base_lr=opt.lr,
-                                          max_lr=0.001,
-                                          step_size_up=15,
+                                          max_lr=opt.lr_max,
+                                          step_size_up=opt.lr_step_size,
                                           cycle_momentum=False)
     elif opt.lr_policy == 'none':
         def lambda_rule(epoch):
@@ -154,8 +154,12 @@ def define_G(opt):
     norm_layer = get_norm_layer(norm_type=opt.norm)
     use_dropout = not opt.no_dropout
 
-    if opt.which_model_netG == 'pretrained_resnet':
+    if opt.which_model_netG == 'resnet_unet':
         netG = ResNetUNet(opt)
+        # init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'pretrained_resnet':
+        netG = ResnetGenerator(opt)
+        init_weights(netG, init_type=opt.init_type)
     elif opt.which_model_netG == 'unet_128_3d':
         netG = UnetGenerator(
             opt.input_nc,
@@ -754,7 +758,7 @@ class ResNetUNet(nn.Module):
                                        no_cuda=no_cuda,
                                        num_seg_classes=2)
 
-        pretrain = torch.load(pretrain_path, map_location='cpu')
+        pretrain = torch.load(pretrain_path, map_location=('cpu' if no_cuda else None))
 
         from collections import OrderedDict
         new_state_dict = OrderedDict()
@@ -793,7 +797,7 @@ class ResNetUNet(nn.Module):
 
         self.conv_last = nn.Conv3d(64, 1, 1)
         init_weights(self.conv_last, init_type=self.opt.init_type)
-        # self.final_activation = nn.Tanh()
+        self.final_activation = nn.Tanh()
 
     def forward(self, input):
         x_original = self.conv_original_size0(input)
@@ -837,16 +841,92 @@ class ResNetUNet(nn.Module):
         x = self.conv_original_size2(x)
 
         output = self.conv_last(x)
-        # output = self.final_activation(output)*40.0 + 40.0
+        output = self.final_activation(output)
 
         return output
 
     def _convrelu(self, in_channels, out_channels, kernel, padding):
         net = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel, padding=padding),
-            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU(inplace=True)
         )
         init_weights(net, init_type=self.opt.init_type)
+        return net
+
+    def _convnorm(self, in_channels, out_channels, kernel, padding):
+        net = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel, padding=padding),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+        init_weights(net, init_type=self.opt.init_type)
+        return net
+
+
+class ResnetGenerator(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+
+        self.opt = opt
+        pretrain_path = '{}/pretrained_models/resnet_{}_23dataset.pth'.format(self.opt.primary_directory, self.opt.resnet_depth)
+        print('loading pretrained model {}'.format(pretrain_path))
+        no_cuda = not torch.cuda.is_available()
+
+        if opt.resnet_depth == 18:
+            self.resnet = resnet3d.resnet18(sample_input_W=128,
+                                            sample_input_H=128,
+                                            sample_input_D=128,
+                                            shortcut_type='A',
+                                            no_cuda=no_cuda,
+                                            num_seg_classes=2)
+        elif opt.resnet_depth == 34:
+            self.resnet = resnet3d.resnet34(sample_input_W=128,
+                                            sample_input_H=128,
+                                            sample_input_D=128,
+                                            shortcut_type='A',
+                                            no_cuda=no_cuda,
+                                            num_seg_classes=2)
+
+        pretrain = torch.load(pretrain_path, map_location='cpu')
+
+        # from collections import OrderedDict
+        # new_state_dict = OrderedDict()
+        # for k, v in pretrain['state_dict'].items():
+        #     name = k[7:]  # remove `module.`
+        #     new_state_dict[name] = v
+
+        # self.resnet.load_state_dict(new_state_dict)
+        # for param in self.resnet.parameters():
+        #     param.requires_grad = False
+
+        end_layers = []
+        end_layers += [self._convnorm(512, 256, 4, 1)]
+        end_layers += [self._convnorm(256, 128, 4, 1)]
+        end_layers += [self._convnorm(128, 64, 4, 1)]
+        end_layers += [nn.Conv3d(64, 1, 1)]
+
+        self.up_sample = nn.Sequential(*end_layers)
+        # init_weights(self.up_sample, init_type=self.opt.init_type)
+        self.final_activation = nn.Tanh()
+
+    def forward(self, input):
+        output = self.resnet(input)
+        output = self.up_sample(output)
+        output = self.final_activation(output)
+
+        return output
+
+    def _convnorm(self, in_channels, out_channels, kernel, padding):
+        net = nn.Sequential(
+            nn.ConvTranspose3d(in_channels,
+                               out_channels,
+                               kernel_size=kernel,
+                               stride=2,
+                               padding=padding,
+                               bias=False),
+            nn.BatchNorm3d(out_channels)
+        )
         return net
 
 

@@ -122,6 +122,16 @@ class TrainOptions(BaseOptions):
             default=50,
             help='multiply by a gamma every lr_decay_iters iterations')
         self.parser.add_argument(
+            '--lr_step_size',
+            type=int,
+            default=50,
+            help='half cycle length for cyclic lr policy')
+        self.parser.add_argument(
+            '--lr_max',
+            type=float,
+            default=0.01,
+            help='peak lr for cyclic lr policy')
+        self.parser.add_argument(
             '--recon_loss',
             type=str,
             default='l1',
