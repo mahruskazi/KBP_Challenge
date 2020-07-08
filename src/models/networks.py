@@ -784,18 +784,23 @@ class ResNetUNet(nn.Module):
         self.unet_layer3_1x1 = self._convrelu(256, 256, 1, 0)
         self.unet_layer4_1x1 = self._convrelu(512, 512, 1, 0)
 
-        self.upsample = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
+        self.upsample1 = self._convtranspose(256, 256, 4, 1)
+        self.upsample2 = self._convtranspose(256, 256, 4, 1)
+        self.upsample3 = self._convtranspose(128, 128, 4, 1)
 
-        self.conv_up3 = self._convrelu(256 + 512, 512, 3, 1)
-        self.conv_up2 = self._convrelu(128 + 512, 256, 3, 1)
-        self.conv_up1 = self._convrelu(64 + 256, 256, 3, 1)
-        self.conv_up0 = self._convrelu(64 + 256, 128, 3, 1)
+        self.conv_up3 = self._convnorm(256 + 512, 512, 3, 1)
+        self.conv_up2 = self._convnorm(128 + 512, 256, 3, 1)
+        self.conv_up1 = self._convnorm(64 + 256, 256, 3, 1)
+        self.conv_up0 = self._convnorm(64 + 256, 128, 3, 1)
 
         self.conv_original_size0 = self._convrelu(1, 64, 3, 1)
         self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
         self.conv_original_size2 = self._convrelu(64 + 128, 64, 3, 1)
 
-        self.conv_last = nn.Conv3d(64, 1, 1)
+        self.conv_last = nn.Sequential(
+            nn.Conv3d(64, 1, 1),
+            nn.BatchNorm3d(1)
+        )
         init_weights(self.conv_last, init_type=self.opt.init_type)
         self.final_activation = nn.Tanh()
 
@@ -819,24 +824,24 @@ class ResNetUNet(nn.Module):
 
         layer4 = self.unet_layer4_1x1(layer4)
         layer3 = self.unet_layer3_1x1(layer3)
-        x = torch.cat([layer4, layer3], dim=1)
+        x = torch.cat([layer4, layer3], dim=1)  # torch.Size([1, 512, 16, 16, 16])
         x = self.conv_up3(x)
 
         layer2 = self.unet_layer2_1x1(layer2)
         x = torch.cat([x, layer2], dim=1)
-        x = self.conv_up2(x)
+        x = self.conv_up2(x)  # torch.Size([1, 256, 16, 16, 16])
 
-        x = self.upsample(x)
+        x = self.upsample1(x)  # torch.Size([1, 256, 32, 32, 32])
         layer1 = self.unet_layer1_1x1(layer1)
         x = torch.cat([x, layer1], dim=1)
         x = self.conv_up1(x)
 
-        x = self.upsample(x)
+        x = self.upsample2(x)
         layer0 = self.unet_layer0_1x1(layer0)
         x = torch.cat([x, layer0], dim=1)
         x = self.conv_up0(x)
 
-        x = self.upsample(x)
+        x = self.upsample3(x)
         x = torch.cat([x, x_original], dim=1)
         x = self.conv_original_size2(x)
 
@@ -848,7 +853,6 @@ class ResNetUNet(nn.Module):
     def _convrelu(self, in_channels, out_channels, kernel, padding):
         net = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel, padding=padding),
-            nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True)
         )
         init_weights(net, init_type=self.opt.init_type)
@@ -859,6 +863,19 @@ class ResNetUNet(nn.Module):
             nn.Conv3d(in_channels, out_channels, kernel, padding=padding),
             nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True)
+        )
+        init_weights(net, init_type=self.opt.init_type)
+        return net
+
+    def _convtranspose(self, in_channels, out_channels, kernel, padding):
+        net = nn.Sequential(
+            nn.ConvTranspose3d(in_channels,
+                               out_channels,
+                               kernel_size=kernel,
+                               stride=2,
+                               padding=padding,
+                               bias=False),
+            nn.BatchNorm3d(out_channels)
         )
         init_weights(net, init_type=self.opt.init_type)
         return net
@@ -890,15 +907,15 @@ class ResnetGenerator(nn.Module):
 
         pretrain = torch.load(pretrain_path, map_location='cpu')
 
-        # from collections import OrderedDict
-        # new_state_dict = OrderedDict()
-        # for k, v in pretrain['state_dict'].items():
-        #     name = k[7:]  # remove `module.`
-        #     new_state_dict[name] = v
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in pretrain['state_dict'].items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
 
-        # self.resnet.load_state_dict(new_state_dict)
-        # for param in self.resnet.parameters():
-        #     param.requires_grad = False
+        self.resnet.load_state_dict(new_state_dict)
+        for param in self.resnet.parameters():
+            param.requires_grad = False
 
         end_layers = []
         end_layers += [self._convnorm(512, 256, 4, 1)]

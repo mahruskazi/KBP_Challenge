@@ -141,7 +141,7 @@ class Pix2PixModel(pl.LightningModule):
     def train_dataloader(self):
         dataset = KBPDataset(self.training_paths, mode_name='training_model')
         print("Number of training patients: %d" % len(dataset))
-        return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True)
+        return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True, num_workers=4)
 
     def generate_csv(self, batch):
         # Get patient ID and make a prediction
