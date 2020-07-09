@@ -5,7 +5,7 @@ from provided_code.general_functions import get_paths
 import numpy as np
 from tqdm import tqdm
 from torch.autograd import Variable
-from src.models import networks, resnet3d
+from src.models import networks, resnet3d, resnetunet
 from src.options.train_options import TrainOptions
 from torchsummary import summary
 
@@ -27,8 +27,8 @@ loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 args = ['--batchSize', '8',
         '--primary_directory', primary_directory,
-        '--which_model_netG', 'pretrained_resnet',
-        '--resnet_depth', '34',
+        '--which_model_netG', 'resnet_unet',
+        '--resnet_depth', '10',
         '--which_direction', 'AtoB',
         '--input_nc', '1',
         '--lambda_A', '100',
@@ -40,20 +40,21 @@ args = ['--batchSize', '8',
 
 opt = TrainOptions().parse(args)
 
-model = networks.ResNetUNet(opt)
+# model = networks.ResNetUNet(opt)
+model = resnetunet.UNetWithResnet50Encoder(opt)
 
 # for param in model.parameters():
 #     print(param.requires_grad)
-print(model)
+# print(model)
 # summary(model, (1, 128, 128, 128))
 
-# for i, batch in enumerate(tqdm(loader)):
-#     input_A = Variable(batch['ct'])
-#     input_A = input_A[..., 0].float()
+for i, batch in enumerate(tqdm(loader)):
+    input_A = Variable(batch['ct'])
+    input_A = input_A[..., 0].float()
 
-#     # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
-#     # print(image_3_channel.size())
+    # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
+    # print(image_3_channel.size())
 
-#     output = model(input_A)
-#     print(output.size())
-#     break
+    output = model(input_A)
+    print(output.size())
+    break

@@ -5,7 +5,7 @@ import functools
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import models
-from src.models import resnet3d
+from src.models import resnet3d, resnetunet
 import copy
 
 #
@@ -155,6 +155,7 @@ def define_G(opt):
     use_dropout = not opt.no_dropout
 
     if opt.which_model_netG == 'resnet_unet':
+        # netG = resnetunet.UNetWithResnet50Encoder(opt)
         netG = ResNetUNet(opt)
         # init_weights(netG, init_type=opt.init_type)
     elif opt.which_model_netG == 'pretrained_resnet':
@@ -757,6 +758,13 @@ class ResNetUNet(nn.Module):
                                        shortcut_type='A',
                                        no_cuda=no_cuda,
                                        num_seg_classes=2)
+        elif opt.resnet_depth == 10:
+            resnet = resnet3d.resnet10(sample_input_W=128,
+                                       sample_input_H=128,
+                                       sample_input_D=128,
+                                       shortcut_type='B',
+                                       no_cuda=no_cuda,
+                                       num_seg_classes=2)
 
         pretrain = torch.load(pretrain_path, map_location=('cpu' if no_cuda else None))
 
@@ -776,22 +784,24 @@ class ResNetUNet(nn.Module):
         self.resnet_layer1 = nn.Sequential(*self.base_layers[3:5])
         self.resnet_layer2 = self.base_layers[5]
         self.resnet_layer3 = self.base_layers[6]
-        self.resnet_layer4 = self.base_layers[7]
+        # self.resnet_layer4 = self.base_layers[7]
 
-        self.unet_layer0_1x1 = self._convrelu(64, 64, 1, 0)
-        self.unet_layer1_1x1 = self._convrelu(64, 64, 1, 0)
-        self.unet_layer2_1x1 = self._convrelu(128, 128, 1, 0)
-        self.unet_layer3_1x1 = self._convrelu(256, 256, 1, 0)
-        self.unet_layer4_1x1 = self._convrelu(512, 512, 1, 0)
+        # self.unet_layer0_1x1 = self._convrelu(64, 64, 1, 0)
+        # self.unet_layer1_1x1 = self._convrelu(64, 64, 1, 0)
+        # self.unet_layer2_1x1 = self._convrelu(128, 128, 1, 0)
+        # self.unet_layer3_1x1 = self._convrelu(256, 256, 1, 0)
+        # self.unet_layer4_1x1 = self._convrelu(512, 512, 1, 0)
 
-        self.upsample1 = self._convtranspose(256, 256, 4, 1)
-        self.upsample2 = self._convtranspose(256, 256, 4, 1)
-        self.upsample3 = self._convtranspose(128, 128, 4, 1)
+        self.upsample = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
-        self.conv_up3 = self._convnorm(256 + 512, 512, 3, 1)
-        self.conv_up2 = self._convnorm(128 + 512, 256, 3, 1)
-        self.conv_up1 = self._convnorm(64 + 256, 256, 3, 1)
-        self.conv_up0 = self._convnorm(64 + 256, 128, 3, 1)
+        # self.upsample1 = self._convtranspose(256, 256, 4, 1)
+        # self.upsample2 = self._convtranspose(256, 256, 4, 1)
+        # self.upsample3 = self._convtranspose(128, 128, 4, 1)
+
+        # self.conv_up3 = self._convrelu(256 + 512, 512, 3, 1)
+        self.conv_up2 = self._convrelu(128 + 256, 256, 3, 1)
+        self.conv_up1 = self._convrelu(64 + 256, 256, 3, 1)
+        self.conv_up0 = self._convrelu(64 + 256, 128, 3, 1)
 
         self.conv_original_size0 = self._convrelu(1, 64, 3, 1)
         self.conv_original_size1 = self._convrelu(64, 64, 3, 1)
@@ -806,13 +816,13 @@ class ResNetUNet(nn.Module):
 
     def forward(self, input):
         x_original = self.conv_original_size0(input)
-        x_original = self.conv_original_size1(x_original)
+        # x_original = self.conv_original_size1(x_original)
 
         layer0 = self.resnet_layer0(input)
         layer1 = self.resnet_layer1(layer0)
         layer2 = self.resnet_layer2(layer1)
         layer3 = self.resnet_layer3(layer2)
-        layer4 = self.resnet_layer4(layer3)
+        # layer4 = self.resnet_layer4(layer3)
 
         """
         layer0 => torch.Size([1, 64, 64, 64, 64])
@@ -822,26 +832,26 @@ class ResNetUNet(nn.Module):
         layer4 => torch.Size([1, 512, 16, 16, 16])
         """
 
-        layer4 = self.unet_layer4_1x1(layer4)
-        layer3 = self.unet_layer3_1x1(layer3)
-        x = torch.cat([layer4, layer3], dim=1)  # torch.Size([1, 512, 16, 16, 16])
-        x = self.conv_up3(x)
+        # layer4 = self.unet_layer4_1x1(layer4)
+        # layer3 = self.unet_layer3_1x1(layer3)
+        # x = torch.cat([layer4, layer3], dim=1)  # torch.Size([1, 512, 16, 16, 16])
+        # x = self.conv_up3(x)
 
-        layer2 = self.unet_layer2_1x1(layer2)
-        x = torch.cat([x, layer2], dim=1)
+        # layer2 = self.unet_layer2_1x1(layer2)
+        x = torch.cat([layer2, layer3], dim=1)
         x = self.conv_up2(x)  # torch.Size([1, 256, 16, 16, 16])
 
-        x = self.upsample1(x)  # torch.Size([1, 256, 32, 32, 32])
-        layer1 = self.unet_layer1_1x1(layer1)
+        x = self.upsample(x)  # torch.Size([1, 256, 32, 32, 32])
+        # layer1 = self.unet_layer1_1x1(layer1)
         x = torch.cat([x, layer1], dim=1)
         x = self.conv_up1(x)
 
-        x = self.upsample2(x)
-        layer0 = self.unet_layer0_1x1(layer0)
+        x = self.upsample(x)
+        # layer0 = self.unet_layer0_1x1(layer0)
         x = torch.cat([x, layer0], dim=1)
         x = self.conv_up0(x)
 
-        x = self.upsample3(x)
+        x = self.upsample(x)
         x = torch.cat([x, x_original], dim=1)
         x = self.conv_original_size2(x)
 
