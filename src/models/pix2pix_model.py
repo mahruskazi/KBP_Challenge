@@ -28,7 +28,7 @@ class Pix2PixModel(pl.LightningModule):
 
         self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
         if self.opt.no_perceptual_loss:
-            self.criterionL1 = torch.nn.L1Loss()
+            self.criterionL1 = torch.nn.SmoothL1Loss()
         else:
             self.criterionP = networks.PerceptualLoss(self.opt)
 

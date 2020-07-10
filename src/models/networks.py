@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import models
 from src.models import resnet3d, resnetunet
+import src.models.medicalzoo.medzoo as medzoo
 import copy
 
 #
@@ -171,6 +172,12 @@ def define_G(opt):
             use_dropout=use_dropout,
             conv=nn.Conv3d,
             deconv=nn.ConvTranspose3d)
+        init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'unet_3d':
+        netG = medzoo.UNet3D(opt.input_nc, opt.output_nc)
+        init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'vnet':
+        netG = medzoo.VNet(in_channels=1, classes=1)
         init_weights(netG, init_type=opt.init_type)
     else:
         raise NotImplementedError(
