@@ -197,7 +197,10 @@ def define_G(opt):
         netG = medzoo.UNet3D(opt.input_nc, opt.output_nc)
         init_weights(netG, init_type=opt.init_type)
     elif opt.which_model_netG == 'vnet':
-        netG = medzoo.VNet(in_channels=1, classes=1)
+        netG = medzoo.VNet(in_channels=1, classes=1, elu=False)
+        init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'vnet_heavy':
+        netG = medzoo.VNetHeavy(in_channels=1, classes=1, elu=False)
         init_weights(netG, init_type=opt.init_type)
     else:
         raise NotImplementedError(

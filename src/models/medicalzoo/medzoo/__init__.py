@@ -10,7 +10,7 @@ from .ResNet3D_VAE import ResNet3dVAE
 from .SkipDenseNet3D import SkipDenseNet3D
 from .Unet2D import Unet
 from .Unet3D import UNet3D
-from .Vnet import VNet, VNetLight
+from .Vnet import VNet, VNetLight, VNetHeavy
 
 model_list = ['UNET3D', 'DENSENET1', "UNET2D", 'DENSENET2', 'DENSENET3', 'HYPERDENSENET', "SKIPDENSENET3D",
               "DENSEVOXELNET", 'VNET', 'VNET2', "RESNET3DVAE", "RESNETMED3D", "COVIDNET1", "COVIDNET2", "CNN",

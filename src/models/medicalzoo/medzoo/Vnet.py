@@ -159,20 +159,70 @@ class VNet(BaseModel):
         out = self.out_tr(out)
         return out
 
-    def test(self,device='cpu'):
+    def test(self, device='cpu'):
         input_tensor = torch.rand(1, self.in_channels, 32, 32, 32)
         ideal_out = torch.rand(1, self.classes, 32, 32, 32)
         out = self.forward(input_tensor)
         assert ideal_out.shape == out.shape
-        summary(self.to(torch.device(device)), (self.in_channels, 32, 32, 32),device=device)
+        summary(self.to(torch.device(device)), (self.in_channels, 32, 32, 32), device=device)
         # import torchsummaryX
         # torchsummaryX.summary(self, input_tensor.to(device))
         print("Vnet test is complete")
 
 
+class VNetHeavy(BaseModel):
+    """
+    A heavier version of Vnet that adds down_tr512 and up_tr512
+    """
+
+    def __init__(self, elu=True, in_channels=1, classes=4):
+        super(VNetLight, self).__init__()
+        self.classes = classes
+        self.in_channels = in_channels
+
+        self.in_tr = InputTransition(in_channels, elu=elu)
+        self.down_tr32 = DownTransition(16, 1, elu)
+        self.down_tr64 = DownTransition(32, 2, elu)
+        self.down_tr128 = DownTransition(64, 3, elu, dropout=True)
+        self.down_tr256 = DownTransition(128, 2, elu, dropout=True)
+        self.down_tr512 = DownTransition(256, 2, elu, dropout=True)
+        self.up_tr512 = UpTransition(512, 512, 2, elu, dropout=True)
+        self.up_tr256 = UpTransition(256, 256, 2, elu, dropout=True)
+        self.up_tr128 = UpTransition(256, 128, 2, elu, dropout=True)
+        self.up_tr64 = UpTransition(128, 64, 1, elu)
+        self.up_tr32 = UpTransition(64, 32, 1, elu)
+        self.out_tr = OutputTransition(32, classes, elu)
+
+    def forward(self, x):
+        out16 = self.in_tr(x)
+        out32 = self.down_tr32(out16)
+        out64 = self.down_tr64(out32)
+        out128 = self.down_tr128(out64)
+        out256 = self.down_tr256(out128)
+        out512 = self.down_tr512(out256)
+        out = self.up_tr512(out512, out256)
+        out = self.up_tr256(out256, out128)
+        out = self.up_tr128(out, out64)
+        out = self.up_tr64(out, out32)
+        out = self.up_tr32(out, out16)
+        out = self.out_tr(out)
+        return out
+
+    def test(self, device='cpu'):
+        input_tensor = torch.rand(1, self.in_channels, 32, 32, 32)
+        ideal_out = torch.rand(1, self.classes, 32, 32, 32)
+        out = self.forward(input_tensor)
+        assert ideal_out.shape == out.shape
+        summary(self.to(torch.device(device)), (self.in_channels, 32, 32, 32), device=device)
+        # import torchsummaryX
+        # torchsummaryX.summary(self, input_tensor.to(device))
+
+        print("Vnet heavy test is complete")
+
+
 class VNetLight(BaseModel):
     """
-    A lighter version of Vnet that skips down_tr256 and up_tr256 in oreder to reduce time and space complexity
+    A lighter version of Vnet that skips down_tr256 and up_tr256 in order to reduce time and space complexity
     """
 
     def __init__(self, elu=True, in_channels=1, classes=4):
@@ -200,17 +250,13 @@ class VNetLight(BaseModel):
         out = self.out_tr(out)
         return out
 
-    def test(self,device='cpu'):
+    def test(self, device='cpu'):
         input_tensor = torch.rand(1, self.in_channels, 32, 32, 32)
         ideal_out = torch.rand(1, self.classes, 32, 32, 32)
         out = self.forward(input_tensor)
         assert ideal_out.shape == out.shape
-        summary(self.to(torch.device(device)), (self.in_channels, 32, 32, 32),device=device)
+        summary(self.to(torch.device(device)), (self.in_channels, 32, 32, 32), device=device)
         # import torchsummaryX
         # torchsummaryX.summary(self, input_tensor.to(device))
 
         print("Vnet light test is complete")
-
-
-#m = VNet(in_channels=1,num_classes=2)
-#m.test()
