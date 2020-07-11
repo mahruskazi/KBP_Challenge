@@ -27,10 +27,7 @@ class Pix2PixModel(pl.LightningModule):
                                                self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
 
         self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
-        if self.opt.no_perceptual_loss:
-            self.criterionL1 = torch.nn.SmoothL1Loss()
-        else:
-            self.criterionP = networks.PerceptualLoss(self.opt)
+        self.loss = networks.get_loss(self.opt)
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -89,10 +86,7 @@ class Pix2PixModel(pl.LightningModule):
         G_losses['loss_G_GAN'] = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
 
-        if self.opt.no_perceptual_loss:
-            G_losses['loss_G_L1'] = self.criterionL1(fake, real_B) * self.opt.lambda_A
-        else:
-            G_losses['loss_G_perceptual'] = self.criterionP(fake, real_B) * self.opt.lambda_perceptual
+        G_losses[self.opt.loss_function] = self.loss(fake, real_B) * self.opt.lambda_A
 
         # combine loss and calculate gradients
         loss_G = sum(G_losses.values()).mean()

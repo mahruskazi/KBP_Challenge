@@ -7,6 +7,7 @@ from torch.optim import lr_scheduler
 from torchvision import models
 from src.models import resnet3d, resnetunet
 import src.models.medicalzoo.medzoo as medzoo
+import src.models.medicalzoo.losses3D as losses3D
 import copy
 
 #
@@ -146,6 +147,25 @@ def get_scheduler(optimizer, opt):
             'learning rate policy [{}] is not implemented'.format(
                 opt.lr_policy))
     return scheduler
+
+
+def get_loss(opt):
+    ''' Rules for how to adjust the learning rate. Lambda: custom method to
+    change learning rate. StepLR: learning rate decays by gamma each step size.
+    Plateau: reduce once the quantity monitored has stopped decreasing.
+    '''
+    if opt.loss_function == 'L1':
+        return nn.L1Loss()
+    elif opt.loss_function == 'smoothed_L1':
+        return nn.SmoothL1Loss()
+    elif opt.loss_function == 'dice':
+        return losses3D.DiceLoss(sigmoid_normalization=False)
+    elif opt.loss_function == 'perceptual':
+        return PerceptualLoss(opt)
+    else:
+        return NotImplementedError(
+            'loss function [{}] is not implemented'.format(
+                opt.loss_function))
 
 
 def define_G(opt):

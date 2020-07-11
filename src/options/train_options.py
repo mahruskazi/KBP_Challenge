@@ -132,17 +132,16 @@ class TrainOptions(BaseOptions):
             default=0.01,
             help='peak lr for cyclic lr policy')
         self.parser.add_argument(
-            '--recon_loss',
+            '--loss_function',
             type=str,
-            default='l1',
-            help='reconstruction loss type: l1|l2')
+            default='smoothed_L1',
+            help='loss function: L1|smoothed_L1|perceptual')
         self.parser.add_argument(
             '--training_size',
             type=int,
             default=100,
             help='The number of images used for training')
         self.parser.add_argument('--lambda_perceptual', type=float, default=10.0, help='weight for perceptual loss')
-        self.parser.add_argument('--no_perceptual_loss', action='store_true', help='if specified, do *not* use perceptual feature matching loss')
         self.parser.add_argument(
             '--resnet_depth',
             type=int,
