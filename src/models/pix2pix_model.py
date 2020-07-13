@@ -151,7 +151,8 @@ class Pix2PixModel(pl.LightningModule):
         image = image[..., 0].float()
 
         generated = self.generator(image)
-        generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        if not self.opt.no_scaling:
+            generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save

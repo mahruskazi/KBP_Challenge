@@ -174,6 +174,7 @@ def define_G(opt):
     netG = None
     norm_layer = get_norm_layer(norm_type=opt.norm)
     use_dropout = not opt.no_dropout
+    use_tanh = not opt.no_scaling
 
     if opt.which_model_netG == 'resnet_unet':
         # netG = resnetunet.UNetWithResnet50Encoder(opt)
@@ -187,6 +188,7 @@ def define_G(opt):
             opt.input_nc,
             opt.output_nc,
             7,
+            use_tanh,
             opt.ngf,
             norm_layer=norm_layer,
             use_dropout=use_dropout,
@@ -287,6 +289,13 @@ def define_D(input_nc,
             norm_layer=norm_layer,
             use_sigmoid=use_sigmoid,
             conv=nn.Conv3d)
+    elif which_model_netD == 'multiscale':
+        netD = MultiscaleDiscriminator(
+            input_nc,
+            ndf,
+            n_layers_D,
+            norm_layer=norm_layer,
+            use_sigmoid=use_sigmoid)
     elif which_model_netD == 'voxel':
         netD = PixelDiscriminator(
             input_nc,
@@ -354,41 +363,43 @@ class GANLoss(nn.Module):
         self.fake_label = target_fake_label
         self.real_label_var = None
         self.fake_label_var = None
-
+        self.Tensor = torch.FloatTensor
         if use_lsgan:
-            self.loss = nn.MSELoss()  # mean squared error
+            self.loss = nn.MSELoss()
         else:
-            self.loss = nn.BCELoss()  # binary cross entropy
+            self.loss = nn.BCELoss()
 
-    def get_target_tensor(self, input_data, target_is_real):
-        ''' Loss function needs 2 inputs, an 'input' and a target tensor. If
-        the target is real, then create a 'target tensor' filled with real
-        label (1.0) everywhere. If the target is false, then create a 'target
-        tensor' filled with false label (0.0) everywhere. Then do BCELoss or
-        MSELoss as desired.
-        '''
+    def get_target_tensor(self, input, target_is_real):
         target_tensor = None
         if target_is_real:
-            create_label = ((self.real_label_var is None) or (self.real_label_var.numel() != input_data.numel()))
+            create_label = ((self.real_label_var is None) or
+                            (self.real_label_var.numel() != input.numel()))
             if create_label:
-                real_tensor = torch.Tensor(input_data.size()).fill_(self.real_label)
-                real_tensor = real_tensor.type_as(input_data)
-                self.real_label_var = Variable(
-                    real_tensor, requires_grad=False)
+                real_tensor = self.Tensor(input.size()).fill_(self.real_label)
+                real_tensor = real_tensor.type_as(input)
+                self.real_label_var = Variable(real_tensor, requires_grad=False)
             target_tensor = self.real_label_var
         else:
-            create_label = ((self.fake_label_var is None) or (self.fake_label_var.numel() != input_data.numel()))
+            create_label = ((self.fake_label_var is None) or
+                            (self.fake_label_var.numel() != input.numel()))
             if create_label:
-                fake_tensor = torch.Tensor(input_data.size()).fill_(self.fake_label)
-                fake_tensor = fake_tensor.type_as(input_data)
-                self.fake_label_var = Variable(
-                    fake_tensor, requires_grad=False)
+                fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
+                fake_tensor = fake_tensor.type_as(input)
+                self.fake_label_var = Variable(fake_tensor, requires_grad=False)
             target_tensor = self.fake_label_var
         return target_tensor
 
-    def __call__(self, input_data, target_is_real):
-        target_tensor = self.get_target_tensor(input_data, target_is_real)
-        return self.loss(input_data, target_tensor)
+    def __call__(self, input, target_is_real):
+        if isinstance(input[0], list):
+            loss = 0
+            for input_i in input:
+                pred = input_i[-1]
+                target_tensor = self.get_target_tensor(pred, target_is_real)
+                loss += self.loss(pred, target_tensor)
+            return loss
+        else:
+            target_tensor = self.get_target_tensor(input[-1], target_is_real)
+            return self.loss(input[-1], target_tensor)
 
 
 # Perceptual loss that uses a pretrained VGG network
@@ -435,6 +446,12 @@ class PerceptualLoss(nn.Module):
         for i in range(len(x_vgg)):
             loss += self.criterion(x_vgg[i], y_vgg[i].detach())
         return loss
+
+
+# KL Divergence loss used in VAE with an image encoder
+class KLDLoss(nn.Module):
+    def forward(self, mu, logvar):
+        return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
 
 class ResnetBeamletGenerator(nn.Module):
@@ -599,6 +616,7 @@ class UnetGenerator(nn.Module):
                  input_nc,
                  output_nc,
                  num_downs,
+                 use_tanh,
                  ngf=64,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
@@ -660,7 +678,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
-            use_tanh=False,
+            use_tanh=use_tanh,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)
@@ -991,6 +1009,48 @@ class ResnetGenerator(nn.Module):
             nn.BatchNorm3d(out_channels)
         )
         return net
+
+
+class MultiscaleDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm3d,
+                 use_sigmoid=False, num_D=3, getIntermFeat=False):
+        super(MultiscaleDiscriminator, self).__init__()
+        self.num_D = num_D
+        self.n_layers = n_layers
+        self.getIntermFeat = getIntermFeat
+
+        for i in range(num_D):
+            netD = NLayerDiscriminator(input_nc, ndf, n_layers, norm_layer, use_sigmoid, conv=nn.Conv3d)
+            if getIntermFeat:
+                for j in range(n_layers+2):
+                    setattr(self, 'scale'+str(i)+'_layer'+str(j), getattr(netD, 'model'+str(j)))
+            else:
+                setattr(self, 'layer'+str(i), netD.model)
+
+        self.downsample = nn.AvgPool3d(3, stride=2, padding=1, count_include_pad=False)
+
+    def singleD_forward(self, model, input):
+        if self.getIntermFeat:
+            result = [input]
+            for i in range(len(model)):
+                result.append(model[i](result[-1]))
+            return result[1:]
+        else:
+            return [model(input)]
+
+    def forward(self, input):
+        num_D = self.num_D
+        result = []
+        input_downsampled = input
+        for i in range(num_D):
+            if self.getIntermFeat:
+                model = [getattr(self, 'scale'+str(num_D-1-i)+'_layer'+str(j)) for j in range(self.n_layers+2)]
+            else:
+                model = getattr(self, 'layer'+str(num_D-1-i))
+            result.append(self.singleD_forward(model, input_downsampled))
+            if i != (num_D-1):
+                input_downsampled = self.downsample(input_downsampled)
+        return result
 
 
 class NLayerDiscriminator(nn.Module):

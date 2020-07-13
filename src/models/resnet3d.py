@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from torch.autograd import Variable
 from functools import partial
 
@@ -113,10 +114,6 @@ class ResNet(nn.Module):
     def __init__(self,
                  block,
                  layers,
-                 sample_input_D,
-                 sample_input_H,
-                 sample_input_W,
-                 num_seg_classes,
                  shortcut_type='B',
                  no_cuda=False):
         self.inplanes = 64
@@ -141,26 +138,6 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(
             block, 512, layers[3], shortcut_type, stride=1, dilation=4)
 
-        # self.conv_seg = nn.Sequential(nn.ConvTranspose3d(512 * block.expansion,
-        #                                                  32,
-        #                                                  2,
-        #                                                  stride=2),
-        #                               nn.BatchNorm3d(32),
-        #                               nn.ReLU(inplace=True),
-        #                               nn.Conv3d(32,
-        #                                         32,
-        #                                         kernel_size=3,
-        #                                         stride=(1, 1, 1),
-        #                                         padding=(1, 1, 1),
-        #                                         bias=False),
-        #                               nn.BatchNorm3d(32),
-        #                               nn.ReLU(inplace=True),
-        #                               nn.Conv3d(32,
-        #                                         num_seg_classes,
-        #                                         kernel_size=1,
-        #                                         stride=(1, 1, 1),
-        #                                         bias=False))
-
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
                 m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
@@ -170,6 +147,8 @@ class ResNet(nn.Module):
 
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
         downsample = None
+        kw = 3
+        pw = int(np.ceil((kw - 1.0) / 2))
         if stride != 1 or self.inplanes != planes * block.expansion:
             if shortcut_type == 'A':
                 downsample = partial(
@@ -182,7 +161,8 @@ class ResNet(nn.Module):
                     nn.Conv3d(
                         self.inplanes,
                         planes * block.expansion,
-                        kernel_size=1,
+                        kernel_size=kw,
+                        padding=pw,
                         stride=stride,
                         bias=False), nn.BatchNorm3d(planes * block.expansion))
 
@@ -206,6 +186,7 @@ class ResNet(nn.Module):
         # x = self.conv_seg(x)
 
         return x
+
 
 def resnet10(**kwargs):
     """Constructs a ResNet-10 model.
