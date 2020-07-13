@@ -2,32 +2,29 @@ import torch
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
-import numpy as np
-import pandas as pd
-from collections import OrderedDict
+import src.models.networks as networks
+import src.models.medicalzoo.medzoo as medzoo
 from src.dataloaders.kbp_dataset import KBPDataset
 from provided_code.general_functions import get_paths, sparse_vector_function
 from provided_code.dose_evaluation_class import EvaluateDose
-import src.models.networks as networks
 import os
+import numpy as np
+import pandas as pd
+from collections import OrderedDict
 
 
-class Pix2PixModel(pl.LightningModule):
+class VAEModel(pl.LightningModule):
 
     def __init__(self, opt, model_name='pix2pix_default', stage='training'):
-        super(Pix2PixModel, self).__init__()
+        super(VAEModel, self).__init__()
         self.opt = opt
         self.model_name = model_name
         self.stage = stage
 
-        self.generator = networks.define_G(self.opt)
-
-        use_sigmoid = self.opt.no_lsgan
-        self.discriminator = networks.define_D(self.opt.input_nc + self.opt.output_nc, self.opt.ndf, self.opt.which_model_netD,
-                                               self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
-
-        self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
-        self.loss = networks.get_loss(self.opt)
+        self.resnet_vae = medzoo.ResNet3dVAE(in_channels=1, classes=1)
+        # networks.init_weights(self.resnet_vae, init_type=self.opt.init_type)
+        self.gen_loss = networks.get_loss(self.opt)
+        self.vae_loss = medzoo.ResNet3D_VAE.ResNetVAELoss()
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -36,85 +33,36 @@ class Pix2PixModel(pl.LightningModule):
         return Variable(input_A)[..., 0].float(), Variable(input_B)[..., 0].float()
 
     def forward(self, z):
-        return self.generator(z)
+        return self.resnet_vae(z)[0]
 
-    def training_step(self, batch, batch_id, optimizer_idx):
+    def training_step(self, batch, batch_id, optimizer_idx=0):
         ct_image, dose = self.get_inputs(batch)
 
-        fake = self.forward(ct_image)
+        fake, vae_output, mu, logvar = self.resnet_vae(ct_image)
 
-        if optimizer_idx == 0:
-            loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
-        elif optimizer_idx == 1:
-            loss, tqdm_dict = self.backward_D(fake, ct_image, dose)
-        else:
-            raise Exception("Invalid optimizer ID")
+        model_losses = {}
+        model_losses['gen_loss'] = self.gen_loss(fake, dose) * self.opt.lambda_A
+        model_losses['vae_loss'] = self.vae_loss((vae_output, ct_image), (mu, logvar))
+        loss = sum(model_losses.values())
 
         output = OrderedDict({
             'loss': loss,
-            'progress_bar': tqdm_dict,
-            'log': tqdm_dict
+            'progress_bar': model_losses,
+            'log': model_losses
         })
         return output
 
-    def backward_D(self, fake, real_A, real_B):
-        """Calculate GAN loss for the discriminator"""
-        D_losses = {}
-
-        # Fake; stop backprop to the generator by detaching fake_B
-        fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
-        pred_fake = self.discriminator(fake_AB.detach())
-        D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, False)
-        # Real
-        real_AB = torch.cat((real_A, real_B), 1)
-        pred_real = self.discriminator(real_AB)
-        D_losses['loss_D_real'] = self.criterionGAN(pred_real, True)
-        # combine loss and calculate gradients
-        loss_D = sum(D_losses.values()).mean()
-        D_losses['d_loss'] = loss_D
-
-        return loss_D, D_losses
-
-    def backward_G(self, fake, real_A, real_B):
-        """Calculate GAN, L1 and VGG loss for the generator"""
-        G_losses = {}
-
-        # First, G(A) should fake the discriminator
-        fake_AB = torch.cat((real_A, fake), 1)
-        with torch.no_grad():  # D requires no gradients when optimizing G
-            pred_fake = self.discriminator(fake_AB)
-        G_losses['loss_G_GAN'] = self.criterionGAN(pred_fake, True)
-        # Second, G(A) = B
-
-        if self.opt.loss_function == 'dice':
-            G_losses[self.opt.loss_function], _ = self.loss(fake, real_B)
-        else:
-            G_losses[self.opt.loss_function] = self.loss(fake, real_B) * self.opt.lambda_A
-
-        # combine loss and calculate gradients
-        loss_G = sum(G_losses.values()).mean()
-        G_losses['g_loss'] = loss_G
-
-        return loss_G, G_losses
-
     def configure_optimizers(self):
         beta2 = 0.999
+        optimizer = torch.optim.Adam(self.resnet_vae.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
-
-        sched_g = {
-            'scheduler': networks.get_scheduler(opt_g, self.opt),
+        lr_scheduler = {
+            'scheduler': networks.get_scheduler(optimizer, self.opt),
             'monitor': 'loss',
-            'name': 'generator_lr'
-        }
-        sched_d = {
-            'scheduler': networks.get_scheduler(opt_d, self.opt),
-            'monitor': 'loss',
-            'name': 'discriminator_lr'
+            'name': 'training_lr'
         }
 
-        return [opt_g, opt_d], [sched_g, sched_d]
+        return [optimizer], [lr_scheduler]
 
     def prepare_data(self):
         # Define parent directory
@@ -150,8 +98,8 @@ class Pix2PixModel(pl.LightningModule):
         image = Variable(batch['ct'])
         image = image[..., 0].float()
 
-        generated = self.generator(image)
-        generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        generated = self.resnet_vae(image)[0]
+        # generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
@@ -207,12 +155,4 @@ class Pix2PixModel(pl.LightningModule):
     def val_dataloader(self):
         dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
         print("Number of validation patients: %d" % len(dataset))
-        return DataLoader(dataset, batch_size=1, shuffle=False)
-
-    # ---------------------- TEST_STEP ---------------------- #
-    def test_step(self, batch, batch_id):
-        self.generate_csv(batch)
-
-    def test_dataloader(self):
-        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
         return DataLoader(dataset, batch_size=1, shuffle=False)

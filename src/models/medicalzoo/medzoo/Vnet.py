@@ -145,6 +145,7 @@ class VNet(BaseModel):
         self.up_tr64 = UpTransition(128, 64, 1, elu)
         self.up_tr32 = UpTransition(64, 32, 1, elu)
         self.out_tr = OutputTransition(32, classes, elu)
+        self.final_activation = nn.Tanh()
 
     def forward(self, x):
         out16 = self.in_tr(x)
@@ -157,6 +158,7 @@ class VNet(BaseModel):
         out = self.up_tr64(out, out32)
         out = self.up_tr32(out, out16)
         out = self.out_tr(out)
+        out = self.final_activation(out)
         return out
 
     def test(self, device='cpu'):
@@ -176,7 +178,7 @@ class VNetHeavy(BaseModel):
     """
 
     def __init__(self, elu=True, in_channels=1, classes=4):
-        super(VNetLight, self).__init__()
+        super(VNetHeavy, self).__init__()
         self.classes = classes
         self.in_channels = in_channels
 
@@ -192,6 +194,7 @@ class VNetHeavy(BaseModel):
         self.up_tr64 = UpTransition(128, 64, 1, elu)
         self.up_tr32 = UpTransition(64, 32, 1, elu)
         self.out_tr = OutputTransition(32, classes, elu)
+        self.final_activation = nn.Tanh()
 
     def forward(self, x):
         out16 = self.in_tr(x)
@@ -206,6 +209,7 @@ class VNetHeavy(BaseModel):
         out = self.up_tr64(out, out32)
         out = self.up_tr32(out, out16)
         out = self.out_tr(out)
+        out = self.final_activation(out)
         return out
 
     def test(self, device='cpu'):

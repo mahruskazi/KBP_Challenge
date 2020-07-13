@@ -130,6 +130,7 @@ class SkipDenseNet3D(BaseModel):
         self.bn_class = nn.BatchNorm3d(classes * 4 + num_init_features)
         self.conv_class = nn.Conv3d(classes * 4 + num_init_features, classes, kernel_size=1, padding=0)
         self.relu_last = nn.ReLU()
+        self.final_activation = nn.Tanh()
         # ----------------------------------------------------------
 
         # Official init from torch repo.
@@ -166,6 +167,7 @@ class SkipDenseNet3D(BaseModel):
         # ----------------------- classifier -----------------------
         out = self.conv_class(self.relu_last(self.bn_class(out)))
         # ----------------------------------------------------------
+        out = self.final_activation(out)
         return out
 
     def test(self,device='cpu'):

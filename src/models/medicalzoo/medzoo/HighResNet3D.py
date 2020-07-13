@@ -8,9 +8,9 @@ https://arxiv.org/pdf/1707.01992.pdf
 """
 
 
-class ConvInit(nn.Module):
+class CovInit(nn.Module):
     def __init__(self, in_channels):
-        super(ConvInit, self).__init__()
+        super(CovInit, self).__init__()
         self.num_features = 16
         self.in_channels = in_channels
 
@@ -27,9 +27,9 @@ class ConvInit(nn.Module):
         return y1, y2
 
 
-class ConvRed(nn.Module):
+class CovRed(nn.Module):
     def __init__(self, in_channels):
-        super(ConvRed, self).__init__()
+        super(CovRed, self).__init__()
         self.num_features = 16
         self.in_channels = in_channels
 
@@ -42,9 +42,9 @@ class ConvRed(nn.Module):
         return self.conv_red(x)
 
 
-class DilatedConv2(nn.Module):
+class DilatedCov2(nn.Module):
     def __init__(self, in_channels):
-        super(DilatedConv2, self).__init__()
+        super(DilatedCov2, self).__init__()
         self.num_features = 32
         self.in_channels = in_channels
         bn1 = torch.nn.BatchNorm3d(self.in_channels)
@@ -57,9 +57,9 @@ class DilatedConv2(nn.Module):
         return self.conv_dil(x)
 
 
-class DilatedConv4(nn.Module):
+class DilatedCov4(nn.Module):
     def __init__(self, in_channels):
-        super(DilatedConv4, self).__init__()
+        super(DilatedCov4, self).__init__()
         self.num_features = 64
         self.in_channels = in_channels
 
@@ -73,9 +73,9 @@ class DilatedConv4(nn.Module):
         return self.conv_dil(x)
 
 
-class Conv1x1x1(nn.Module):
+class Cov1x1x1(nn.Module):
     def __init__(self, in_channels, classes):
-        super(Conv1x1x1, self).__init__()
+        super(Cov1x1x1, self).__init__()
         self.num_features = classes
         self.in_channels = in_channels
 
@@ -102,10 +102,10 @@ class HighResNet3D(BaseModel):
         self.conv_out_channels = 80
 
         if self.shortcut_type == "B":
-            self.res_pad_1 = Conv1x1x1(self.red_channels, self.dil2_channels)
-            self.res_pad_2 = Conv1x1x1(self.dil2_channels, self.dil4_channels)
+            self.res_pad_1 = Cov1x1x1(self.red_channels, self.dil2_channels)
+            self.res_pad_2 = Cov1x1x1(self.dil2_channels, self.dil4_channels)
 
-        self.conv_init = ConvInit(in_channels)
+        self.conv_init = CovInit(in_channels)
 
         self.red_blocks1 = self.create_red(self.init_channels)
         self.red_blocks2 = self.create_red(self.red_channels)
@@ -122,10 +122,10 @@ class HighResNet3D(BaseModel):
         if dropout_layer:
             conv_out = nn.Conv3d(self.dil4_channels, self.conv_out_channels, kernel_size=1)
             drop3d = nn.Dropout3d()
-            conv1x1x1 = Conv1x1x1(self.conv_out_channels, self.classes)
+            conv1x1x1 = Cov1x1x1(self.conv_out_channels, self.classes)
             self.conv_out = nn.Sequential(conv_out, drop3d, conv1x1x1)
         else:
-            self.conv_out = Conv1x1x1(self.dil4_channels, self.classes)
+            self.conv_out = Cov1x1x1(self.dil4_channels, self.classes)
 
     def shortcut_pad(self, x, desired_channels):
         if self.shortcut_type == 'A':
@@ -142,18 +142,18 @@ class HighResNet3D(BaseModel):
         return y
 
     def create_red(self, in_channels):
-        conv_red_1 = ConvRed(in_channels)
-        conv_red_2 = ConvRed(self.red_channels)
+        conv_red_1 = CovRed(in_channels)
+        conv_red_2 = CovRed(self.red_channels)
         return nn.Sequential(conv_red_1, conv_red_2)
 
     def create_dil2(self, in_channels):
-        conv_dil2_1 = DilatedConv2(in_channels)
-        conv_dil2_2 = DilatedConv2(self.dil2_channels)
+        conv_dil2_1 = DilatedCov2(in_channels)
+        conv_dil2_2 = DilatedCov2(self.dil2_channels)
         return nn.Sequential(conv_dil2_1, conv_dil2_2)
 
     def create_dil4(self, in_channels):
-        conv_dil4_1 = DilatedConv4(in_channels)
-        conv_dil4_2 = DilatedConv4(self.dil4_channels)
+        conv_dil4_1 = DilatedCov4(in_channels)
+        conv_dil4_2 = DilatedCov4(self.dil4_channels)
         return nn.Sequential(conv_dil4_1, conv_dil4_2)
 
     def red_forward(self, x):
@@ -197,29 +197,29 @@ class HighResNet3D(BaseModel):
 
 def test_all_modules():
     a = torch.rand(1, 16, 32, 32, 32)
-    m1 = ConvInit(in_channels=16)
+    m1 = CovInit(in_channels=16)
     y, _ = m1(a)
     assert y.shape == a.shape, print(y.shape)
-    print("ConvInit OK")
+    print("CovInit OK")
 
-    m2 = ConvRed(in_channels=16)
+    m2 = CovRed(in_channels=16)
     y = m2(a)
     assert y.shape == a.shape, print(y.shape)
-    print("ConvRed OK")
+    print("CovRed OK")
 
     a = torch.rand(1, 32, 32, 32, 32)
-    m3 = DilatedConv2(in_channels=32)
+    m3 = DilatedCov2(in_channels=32)
     y = m3(a)
     assert y.shape == a.shape, print(y.shape)
-    print("DilatedConv2 OK")
+    print("DilatedCov2 OK")
 
     a = torch.rand(1, 64, 32, 32, 32)
-    m4 = DilatedConv4(in_channels=64)
+    m4 = DilatedCov4(in_channels=64)
     y = m4(a)
     assert y.shape == a.shape, print(y.shape)
-    print("DilatedConv4 OK")
+    print("DilatedCov4 OK")
 
-    m4 = Conv1x1x1(in_channels=64, classes=4)
+    m4 = Cov1x1x1(in_channels=64, classes=4)
     y = m4(a)
     print(y.shape)
 

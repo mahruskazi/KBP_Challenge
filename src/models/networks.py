@@ -202,6 +202,12 @@ def define_G(opt):
     elif opt.which_model_netG == 'vnet_heavy':
         netG = medzoo.VNetHeavy(in_channels=1, classes=1, elu=False)
         init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'skipdensenet':
+        netG = medzoo.SkipDenseNet3D(in_channels=1, growth_rate=16, num_init_features=32, drop_rate=0.1, classes=1)
+        init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'hdresnet':
+        netG = medzoo.HighResNet3D(in_channels=1, classes=1)
+        init_weights(netG, init_type=opt.init_type)
     else:
         raise NotImplementedError(
             'Generator model name [{}] is not recognized'.format(opt.which_model_netG))

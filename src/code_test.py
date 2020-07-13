@@ -5,7 +5,7 @@ from provided_code.general_functions import get_paths
 import numpy as np
 from tqdm import tqdm
 from torch.autograd import Variable
-from src.models import networks, resnet3d, resnetunet
+from src.models import networks, resnet3d, resnetunet, vae_model
 from src.options.train_options import TrainOptions
 from torchsummary import summary
 import src.models.medicalzoo.medzoo as medzoo
@@ -21,14 +21,9 @@ plan_paths = get_paths(training_data_dir, ext='')  # gets the path of each plan'
 num_train_pats = np.minimum(100, len(plan_paths))  # number of plans that will be used to train model
 training_paths = plan_paths[:num_train_pats]
 
-
-dataset = KBPDataset(plan_paths)
-
-loader = DataLoader(dataset, batch_size=1, shuffle=False)
-
 args = ['--batchSize', '8',
         '--primary_directory', primary_directory,
-        '--which_model_netG', 'resnet_unet',
+        '--which_model_netG', 'hdresnet',
         '--resnet_depth', '10',
         '--which_direction', 'AtoB',
         '--input_nc', '1',
@@ -40,9 +35,12 @@ args = ['--batchSize', '8',
         '--lr', '0.01']
 
 opt = TrainOptions().parse(args)
+dataset = KBPDataset(opt, plan_paths)
+loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-# model = networks.ResNetUNet(opt)
-model = medzoo.VNet(in_channels=1, classes=1)
+model = networks.define_G(opt)
+# model = medzoo.VNet(in_channels=1, classes=1)
+# model = vae_model.VAEModel(opt)
 print(model)
 
 # for param in model.parameters():

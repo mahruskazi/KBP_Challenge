@@ -7,13 +7,14 @@ class KBPDataset(Dataset):
 
     """Face Landmarks dataset."""
 
-    def __init__(self, file_paths_list, patient_shape=(128, 128, 128), mode_name='training_model', patient_list=None):
+    def __init__(self, opt, file_paths_list, patient_shape=(128, 128, 128), mode_name='training_model', patient_list=None):
         """Initialize the DataLoader class, which loads the data for OpenKBP
         :param file_paths_list: list of the directories or single files where data for each patient is stored
         :param patient_shape: the shape of the patient data
         :param mode_name: structure data for different modes
         """
         # Set file_loader specific attributes
+        self.opt = opt
         self.rois = dict(oars=['Brainstem', 'SpinalCord', 'RightParotid', 'LeftParotid',
                                'Esophagus', 'Larynx', 'Mandible'], targets=['PTV56', 'PTV63', 'PTV70'])
 
@@ -146,13 +147,15 @@ class KBPDataset(Dataset):
                 data = np.array(loaded_file[key]['data'])
 
                 np.put(shaped_data[key], indices.astype(np.int64), data.astype(np.int64))
-                if key == 'ct':
-                    shaped_data[key] = shaped_data[key].clip(None, 4071)
-                    shaped_data[key] = (shaped_data[key] - np.mean(shaped_data[key])) / np.std(shaped_data[key])
-                    # shaped_data[key] = 2.0*shaped_data[key]/4071.0 - 1.0
-                if key == 'dose' and self.mode_name != 'evaluation':
-                    # shaped_data[key] = shaped_data[key]/80.0
-                    shaped_data[key] = 2.0*shaped_data[key]/80.0 - 1.0
+                if not self.opt.no_normalization:
+                    if key == 'ct':
+                        shaped_data[key] = shaped_data[key].clip(None, 4071)
+                        shaped_data[key] = (shaped_data[key] - np.mean(shaped_data[key])) / np.std(shaped_data[key])
+                        # shaped_data[key] = 2.0*shaped_data[key]/4071.0 - 1.0
+                if not self.opt.no_scaling:
+                    if key == 'dose' and self.mode_name != 'evaluation':
+                        # shaped_data[key] = shaped_data[key]/80.0
+                        shaped_data[key] = 2.0*shaped_data[key]/80.0 - 1.0
 
         return shaped_data
 

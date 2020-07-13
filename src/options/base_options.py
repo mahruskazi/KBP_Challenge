@@ -164,6 +164,16 @@ class BaseOptions():
                 action='store_true',
                 help=
                 'if specified, do not convert 1 channel to 3 channel output.')
+        self.parser.add_argument(
+                '--no_normalization',
+                action='store_true',
+                help=
+                'if specified, do not normalize the input ct images')
+        self.parser.add_argument(
+                '--no_scaling',
+                action='store_true',
+                help=
+                'if specified, do not scale the reference doses to -1 to 1')
 
         self.initialized = True
 

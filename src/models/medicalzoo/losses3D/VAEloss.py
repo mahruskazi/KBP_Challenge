@@ -4,7 +4,7 @@ import torch.functional as F
 
 
 #TODO test and class
-def loss_vae(recon_x, x, mu, logvar, type="BCE", h1=0.1,h2=0.1):
+def loss_vae(recon_x, x, mu, logvar, type="BCE", h1=0.1, h2=0.1):
     """
     see Appendix B from VAE paper:
     Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
@@ -24,7 +24,7 @@ def loss_vae(recon_x, x, mu, logvar, type="BCE", h1=0.1,h2=0.1):
     rec_flat = recon_x.view(batch, -1)
     x_flat = x.view(batch, -1)
     if type=="BCE":
-        loss_rec = F.binary_cross_entropy(rec_flat,x_flat, reduction='sum')
+        loss_rec = F.binary_cross_entropy(rec_flat, x_flat, reduction='sum')
     elif type=="L1":
         loss_rec = torch.sum(torch.abs(rec_flat-x_flat))
     elif type =="L2":

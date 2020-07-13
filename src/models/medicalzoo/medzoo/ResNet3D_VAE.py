@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.functional as F
 
 from src.models.medicalzoo.medzoo.BaseModelClass import BaseModel
 
@@ -266,9 +267,14 @@ class ResNet3dVAE(BaseModel):
         self.vae = VAE(in_channels=max_conv_channels, in_dim=vae_in_dim, out_dim=vae_out_dim)
 
     def forward(self, x):
+        batch_size = x.size()[0]
         x1, x2, x3, x4 = self.encoder(x)
         y = self.decoder(x1, x2, x3, x4)
+        print(x4)
         vae_out, mu, logvar = self.vae(x4)
+        vae_out = vae_out.view(batch_size, 1, 128, 128, 128)
+        print("hereee - -- - - - --   -- -------- -- - - -- - ")
+        print(vae_out)
         return y, vae_out, mu, logvar
 
     def test(self):
@@ -279,6 +285,57 @@ class ResNet3dVAE(BaseModel):
         assert y.shape == ideal.shape
         assert mu.shape == logvar.shape
         print("3D-RESNET VAE test OK!")
+
+
+class ResNetVAELoss(nn.Module):
+
+    def __init__(self):
+        super(ResNetVAELoss, self).__init__()
+
+    def forward(self, images, nums):
+        return self.vae_loss(images[0], images[1], nums[0], nums[1], loss_type='L2')
+
+    def dice_loss(self, input, target):
+        smooth = 1.
+
+        iflat = input.view(-1)
+        tflat = target.view(-1)
+        intersection = (iflat * tflat).sum()
+
+        return 1 - ((2. * intersection + smooth) / (iflat.sum() + tflat.sum() + smooth))
+
+    def vae_loss(self, recon_x, x, mu, logvar, loss_type="BCE", h1=0.1, h2=0.1):
+        """
+        see Appendix B from VAE paper:
+        Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
+        # https://arxiv.org/abs/1312.6114
+        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+        :param recon_x:
+        :param x:
+        :param mu,logvar: VAE parameters
+        :param type: choices BCE,L1,L2
+        :param h1: reconsrtruction hyperparam
+        :param h2: KL div hyperparam
+        :return: total loss of VAE
+        """
+        batch = recon_x.shape[0]
+        assert recon_x.size() == x.size()
+        assert recon_x.shape[0] == x.shape[0]
+
+        dice = self.dice_loss(recon_x, x)
+
+        rec_flat = recon_x.view(batch, -1)
+        x_flat = x.view(batch, -1)
+        if loss_type == "BCE":
+            loss_rec = F.binary_cross_entropy(rec_flat, x_flat, reduction='sum')
+        elif loss_type == "L1":
+            loss_rec = torch.sum(torch.abs(rec_flat-x_flat))
+        elif loss_type == "L2":
+            loss_rec = torch.sum(torch.sqrt(rec_flat*rec_flat - x_flat*x_flat))
+
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+        return dice + loss_rec*h1 + KLD*h2
 
 
 def test_enc_dec():
