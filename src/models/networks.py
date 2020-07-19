@@ -131,7 +131,7 @@ def get_scheduler(optimizer, opt):
             optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.9, threshold=0.01, patience=5)
+            optimizer, mode='min', factor=0.9, threshold=0.01, patience=opt.patience)
     elif opt.lr_policy == 'cyclic':
         scheduler = lr_scheduler.CyclicLR(optimizer,
                                           base_lr=opt.lr,
@@ -156,6 +156,8 @@ def get_loss(opt):
     '''
     if opt.loss_function == 'L1':
         return nn.L1Loss()
+    elif opt.loss_function == 'L2':
+        return nn.MSELoss()
     elif opt.loss_function == 'smoothed_L1':
         return nn.SmoothL1Loss()
     elif opt.loss_function == 'dice':
@@ -678,7 +680,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
-            use_tanh=use_tanh,
+            use_tanh=False,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)

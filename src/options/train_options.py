@@ -141,6 +141,11 @@ class TrainOptions(BaseOptions):
             type=int,
             default=100,
             help='The number of images used for training')
+        self.parser.add_argument(
+            '--patience',
+            type=int,
+            default=10,
+            help='used for plateau lr policy')
         self.parser.add_argument('--lambda_perceptual', type=float, default=10.0, help='weight for perceptual loss')
         self.parser.add_argument(
             '--resnet_depth',
