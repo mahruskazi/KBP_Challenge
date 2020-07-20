@@ -152,5 +152,15 @@ class TrainOptions(BaseOptions):
             type=int,
             default=50,
             help='Pretrained resnet depth: 18|50')
+        self.parser.add_argument(
+            '--n_critic',
+            type=int,
+            default=1,
+            help='Number of times iterations of discriminator per generator iteration')
+        self.parser.add_argument(
+            '--weight_cliping_limit',
+            type=float,
+            default=0.01,
+            help='clipping parameter for WGAN')
 
         self.isTrain = True

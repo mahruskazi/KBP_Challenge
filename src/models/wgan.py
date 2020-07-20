@@ -13,18 +13,20 @@ import pandas as pd
 from collections import OrderedDict
 
 
-class VAEModel(pl.LightningModule):
+class WGan(pl.LightningModule):
 
-    def __init__(self, opt, model_name='pix2pix_default', stage='training'):
-        super(VAEModel, self).__init__()
+    def __init__(self, opt, model_name='wgan_default', stage='training'):
+        super(WGan, self).__init__()
         self.opt = opt
         self.model_name = model_name
         self.stage = stage
 
-        self.resnet_vae = medzoo.ResNet3dVAE(in_channels=1, classes=1)
-        # networks.init_weights(self.resnet_vae, init_type=self.opt.init_type)
-        self.gen_loss = networks.get_loss(self.opt)
-        self.vae_loss = medzoo.ResNet3D_VAE.ResNetVAELoss()
+        self.generator = networks.define_G(self.opt)
+
+        self.discriminator = networks.CriticDiscriminator(self.opt)
+
+        self.one = torch.FloatTensor([1])
+        self.mone = self.one * -1
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -33,36 +35,99 @@ class VAEModel(pl.LightningModule):
         return Variable(input_A)[..., 0].float(), Variable(input_B)[..., 0].float()
 
     def forward(self, z):
-        return self.resnet_vae(z)[0]
+        return self.generator(z)
 
-    def training_step(self, batch, batch_id, optimizer_idx=0):
+    def training_step(self, batch, batch_id, optimizer_idx):
         ct_image, dose = self.get_inputs(batch)
 
-        fake, vae_output, mu, logvar = self.resnet_vae(ct_image)
+        fake = self.forward(ct_image)
 
-        model_losses = {}
-        model_losses['gen_loss'] = self.gen_loss(fake, dose) * self.opt.lambda_A
-        model_losses['vae_loss'] = self.vae_loss((vae_output, ct_image), (mu, logvar))
-        loss = sum(model_losses.values())
+        if optimizer_idx == 0:
+            loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
+        elif optimizer_idx == 1:
+            loss, tqdm_dict = self.backward_D(fake, ct_image, dose)
+        else:
+            raise Exception("Invalid optimizer ID")
 
         output = OrderedDict({
             'loss': loss,
-            'progress_bar': model_losses,
-            'log': model_losses
+            'progress_bar': tqdm_dict,
+            'log': tqdm_dict
         })
         return output
 
+    def backward_D(self, fake, real_A, real_B):
+        """Calculate GAN loss for the discriminator"""
+        D_losses = {}
+
+        for p in self.discriminator.parameters():
+            p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+
+        # Fake; stop backprop to the generator by detaching fake_B
+        fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
+        d_loss_fake = self.discriminator(fake_AB.detach())
+        d_loss_fake = d_loss_fake.mean(0).view(1)
+        d_loss_fake.backward(self.one)
+        # Real
+        real_AB = torch.cat((real_A, real_B), 1)
+        d_loss_real = self.discriminator(real_AB)
+        d_loss_real = d_loss_real.mean(0).view(1)
+        d_loss_real.backward(self.mone)
+
+        d_loss = d_loss_fake - d_loss_real
+        # for p in d_loss.parameters():
+        #     p.requires_grad = False
+        D_losses['d_loss'] = d_loss
+        D_losses['Wasserstein_D'] = d_loss_real - d_loss_fake
+
+        return d_loss, D_losses
+
+    def backward_G(self, fake, real_A, real_B):
+        """Calculate GAN, L1 and VGG loss for the generator"""
+        G_losses = {}
+
+        # First, G(A) should fake the discriminator
+        fake_AB = torch.cat((real_A, fake), 1)
+        with torch.no_grad():  # D requires no gradients when optimizing G
+            g_loss = self.discriminator(fake_AB)
+        g_loss = g_loss.mean().mean(0).view(1)
+        g_loss.backward(self.one)
+        # for p in g_loss.parameters():
+        #     p.requires_grad = False
+        g_cost = -g_loss
+        G_losses['g_cost'] = g_cost
+
+        return g_loss, G_losses
+
     def configure_optimizers(self):
         beta2 = 0.999
-        optimizer = torch.optim.Adam(self.resnet_vae.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
-        lr_scheduler = {
-            'scheduler': networks.get_scheduler(optimizer, self.opt),
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
+
+        sched_g = {
+            'scheduler': networks.get_scheduler(opt_g, self.opt),
             'monitor': 'loss',
-            'name': 'training_lr'
+            'name': 'generator_lr'
+        }
+        sched_d = {
+            'scheduler': networks.get_scheduler(opt_d, self.opt),
+            'monitor': 'loss',
+            'name': 'discriminator_lr'
         }
 
-        return [optimizer], [lr_scheduler]
+        dict_g = {
+            'optimizer': torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': 1,
+            'lr_scheduler': sched_g
+        }
+        dict_d = {
+            'optimizer': torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': self.opt.n_critic,
+            'lr_scheduler': sched_d
+        }
+
+        return (dict_g, dict_d)
 
     def prepare_data(self):
         # Define parent directory
@@ -98,8 +163,9 @@ class VAEModel(pl.LightningModule):
         image = Variable(batch['ct'])
         image = image[..., 0].float()
 
-        generated = self.resnet_vae(image)[0]
-        # generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        generated = self.generator(image)
+        if not self.opt.no_scaling:
+            generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
         dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
         # Prepare the dose to save
@@ -155,4 +221,12 @@ class VAEModel(pl.LightningModule):
     def val_dataloader(self):
         dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
         print("Number of validation patients: %d" % len(dataset))
+        return DataLoader(dataset, batch_size=1, shuffle=False)
+
+    # ---------------------- TEST_STEP ---------------------- #
+    def test_step(self, batch, batch_id):
+        self.generate_csv(batch)
+
+    def test_dataloader(self):
+        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
         return DataLoader(dataset, batch_size=1, shuffle=False)

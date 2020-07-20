@@ -160,6 +160,8 @@ def get_loss(opt):
         return nn.MSELoss()
     elif opt.loss_function == 'smoothed_L1':
         return nn.SmoothL1Loss()
+    elif opt.loss_function == 'wasserstein':
+        return lambda x, y: x.mean() * (-2 * int(y) + 1)
     elif opt.loss_function == 'dice':
         return losses3D.DiceLoss(sigmoid_normalization=False)
     elif opt.loss_function == 'perceptual':
@@ -1132,6 +1134,58 @@ class NLayerDiscriminator(nn.Module):
 
     def forward(self, input_data):
         return self.model(input_data)
+
+
+class CriticDiscriminator(nn.Module):
+
+    def __init__(self, opt):
+        super(CriticDiscriminator, self).__init__()
+        self.opt = opt
+        # Filters [256, 512, 1024]
+        # Input_dim = channels (Cx64x64)
+        # Output_dim = 1
+        self.main_module = nn.Sequential(
+            # Image (Cx32x32)
+            nn.Conv3d(in_channels=2, out_channels=256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm3d(num_features=256),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # State (256x16x16)
+            nn.Conv3d(in_channels=256, out_channels=512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm3d(num_features=512),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # State (512x8x8)
+            nn.Conv3d(in_channels=512, out_channels=1024, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm3d(num_features=1024),
+            nn.LeakyReLU(0.2, inplace=True))
+
+        # output of main module --> State (1024x4x4)
+        self.output = nn.Sequential(
+            # The output of D is no longer a probability, we do not apply sigmoid at the output of D.
+            nn.Conv3d(in_channels=1024, out_channels=1, kernel_size=4, stride=1, padding=0))
+
+    def forward(self, x):
+        x = self.main_module(x)
+        return self.output(x)
+
+
+class Critic(nn.Module):
+    def __init__(self):
+        super(Critic, self).__init__()
+        img_shape = (2, 128, 128, 128)
+        self.model = nn.Sequential(
+            nn.Linear(int(np.prod(img_shape)), 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 1),
+        )
+
+    def forward(self, img):
+        img_flat = img.view(img.shape[0], -1)
+        validity = self.model(img_flat)
+        return validity
 
 
 class PixelDiscriminator(nn.Module):

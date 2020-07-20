@@ -100,16 +100,22 @@ class Pix2PixModel(pl.LightningModule):
     def configure_optimizers(self):
         beta2 = 0.999
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
+        opt_g = {
+            'optimizer': torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': 1
+        }
+        opt_d = {
+            'optimizer': torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': self.opt.n_critic
+        }
 
         sched_g = {
-            'scheduler': networks.get_scheduler(opt_g, self.opt),
+            'scheduler': networks.get_scheduler(opt_g['optimizer'], self.opt),
             'monitor': 'loss',
             'name': 'generator_lr'
         }
         sched_d = {
-            'scheduler': networks.get_scheduler(opt_d, self.opt),
+            'scheduler': networks.get_scheduler(opt_d['optimizer'], self.opt),
             'monitor': 'loss',
             'name': 'discriminator_lr'
         }
