@@ -137,6 +137,11 @@ class TrainOptions(BaseOptions):
             default='smoothed_L1',
             help='loss function: L1|smoothed_L1|perceptual')
         self.parser.add_argument(
+            '--norm_D',
+            type=str,
+            default='spectralinstance',
+            help='loss function: batch_3d|spectralinstance')
+        self.parser.add_argument(
             '--training_size',
             type=int,
             default=100,

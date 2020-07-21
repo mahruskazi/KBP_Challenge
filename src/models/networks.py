@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import init
+import numpy as np
 import functools
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
@@ -9,6 +10,7 @@ from src.models import resnet3d, resnetunet
 import src.models.medicalzoo.medzoo as medzoo
 import src.models.medicalzoo.losses3D as losses3D
 import copy
+import torch.nn.utils.spectral_norm as spectral_norm
 
 #
 # Functions
@@ -149,27 +151,27 @@ def get_scheduler(optimizer, opt):
     return scheduler
 
 
-def get_loss(opt):
+def get_loss(loss_function):
     ''' Rules for how to adjust the learning rate. Lambda: custom method to
     change learning rate. StepLR: learning rate decays by gamma each step size.
     Plateau: reduce once the quantity monitored has stopped decreasing.
     '''
-    if opt.loss_function == 'L1':
+    if loss_function == 'L1':
         return nn.L1Loss()
-    elif opt.loss_function == 'L2':
+    elif loss_function == 'L2':
         return nn.MSELoss()
-    elif opt.loss_function == 'smoothed_L1':
+    elif loss_function == 'smoothed_L1':
         return nn.SmoothL1Loss()
-    elif opt.loss_function == 'wasserstein':
+    elif loss_function == 'wasserstein':
         return lambda x, y: x.mean() * (-2 * int(y) + 1)
-    elif opt.loss_function == 'dice':
+    elif loss_function == 'dice':
         return losses3D.DiceLoss(sigmoid_normalization=False)
-    elif opt.loss_function == 'perceptual':
+    elif loss_function == 'perceptual':
         return PerceptualLoss(opt)
     else:
         return NotImplementedError(
             'loss function [{}] is not implemented'.format(
-                opt.loss_function))
+                loss_function))
 
 
 def define_G(opt):
@@ -253,66 +255,28 @@ def define_W(input_nc,
     return netW
 
 
-def define_D(input_nc,
-             ndf,
-             which_model_netD,
-             n_layers_D=3,
-             norm='batch',
-             use_sigmoid=False,
-             init_type='normal'):
+def define_D(opt):
     ''' Parses model parameters and defines the Discriminator module.
     '''
     netD = None
-    norm_layer = get_norm_layer(norm_type=norm)
+    norm_layer = get_norm_layer(norm_type=opt.norm)
 
-    if which_model_netD == 'basic':
-        netD = NLayerDiscriminator(
-            input_nc,
-            ndf,
-            n_layers=3,
-            norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid)
-    elif which_model_netD == 'n_layers':
-        netD = NLayerDiscriminator(
-            input_nc,
-            ndf,
-            n_layers_D,
-            norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid)
-    elif which_model_netD == 'pixel':
-        netD = PixelDiscriminator(
-            input_nc,
-            ndf,
-            norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid)
-    elif which_model_netD == 'n_layers_3d':
-        netD = NLayerDiscriminator(
-            input_nc,
-            ndf,
-            n_layers_D,
-            norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid,
-            conv=nn.Conv3d)
-    elif which_model_netD == 'multiscale':
+    if opt.which_model_netD == 'n_layers_3d':
+        netD = NLayerDiscriminator(opt)
+    elif opt.which_model_netD == 'multiscale':
         netD = MultiscaleDiscriminator(
-            input_nc,
-            ndf,
-            n_layers_D,
+            opt,
+            opt.input_nc,
+            opt.ndf,
+            opt.n_layers_D,
             norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid)
-    elif which_model_netD == 'voxel':
-        netD = PixelDiscriminator(
-            input_nc,
-            ndf,
-            norm_layer=norm_layer,
-            use_sigmoid=use_sigmoid,
-            conv=nn.Conv3d)
+            use_sigmoid=not opt.no_lsgan)
     else:
         raise NotImplementedError(
             'Discriminator model name [{}] is not recognized'.format(
-                which_model_netD))
+                opt.which_model_netD))
 
-    init_weights(netD, init_type=init_type)
+    init_weights(netD, init_type=opt.init_type)
     return netD
 
 
@@ -1016,7 +980,7 @@ class ResnetGenerator(nn.Module):
 
 
 class MultiscaleDiscriminator(nn.Module):
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm3d,
+    def __init__(self, opt, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm3d,
                  use_sigmoid=False, num_D=3, getIntermFeat=False):
         super(MultiscaleDiscriminator, self).__init__()
         self.num_D = num_D
@@ -1024,7 +988,7 @@ class MultiscaleDiscriminator(nn.Module):
         self.getIntermFeat = getIntermFeat
 
         for i in range(num_D):
-            netD = NLayerDiscriminator(input_nc, ndf, n_layers, norm_layer, use_sigmoid, conv=nn.Conv3d)
+            netD = NLayerDiscriminator(opt)
             if getIntermFeat:
                 for j in range(n_layers+2):
                     setattr(self, 'scale'+str(i)+'_layer'+str(j), getattr(netD, 'model'+str(j)))
@@ -1060,132 +1024,90 @@ class MultiscaleDiscriminator(nn.Module):
 class NLayerDiscriminator(nn.Module):
     ''' PatchGAN discriminator, supposed to work on patches within the full image
     to evaluate whether the style is transferred everywhere.
-
-    Init:
-        - Conv2d: inputC -> ndf, 4x4 kernel size
-        - LeakyReLU
-
-    Intermediate:
-        - Conv2D: ndf -> 8 * ndf, 4x4 kernel
-        - Normalize -> LeakyReLU
-        - Conv2d: 8 * ndf -> 8 * ndf, 4x4 kernel
-        - Normalize -> LeakyReLU
-        - Conv2d: 8 * ndf -> 8 * ndf, 4x4 kernel
-        - Normalize -> LeakyReLU
-        - Conv2d: 8 * ndf -> 16 * ndf, 4x4 kernel
-        - Normalize -> LeakyReLU
-        ...
-
-    Final:
-        - Conv2D: 16 * ndf -> 1, 4x4 kernel
-        - Sigmoid
     '''
 
-    def __init__(self,
-                 input_nc,
-                 ndf=64,
-                 n_layers=3,
-                 norm_layer=nn.BatchNorm2d,
-                 use_sigmoid=False,
-                 conv=nn.Conv2d):
+    def __init__(self, opt):
         super(NLayerDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:
-            use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
-                norm_layer.func == nn.InstanceNorm3d)
-        else:
-            use_bias = (norm_layer == nn.InstanceNorm2d) or (
-                norm_layer == nn.InstanceNorm3d)
+        self.opt = opt
 
         kw = 4
-        padw = 1
-        sequence = [
-            conv(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
-            nn.LeakyReLU(0.2, True)
-        ]
+        padw = int(np.ceil((kw - 1.0) / 2))
+        nf = self.opt.ndf
+        input_nc = 2
 
-        nf_mult = 1
-        nf_mult_prev = 1
-        for n in range(1, n_layers):
-            # Conv2d: ndf -> 8 * ndf, 4x4 kernel size on first, the next 2
-            # are 8 * ndf -> 8 * ndf, 4x4 kernel, then all subsequent ones
-            # are 2 ** n * ndf -> 2 ** (n+1) * ndf, 4x4 kernel
-            # each Conv followed with a norm_layer and LeakyReLU
-            nf_mult_prev = nf_mult
-            nf_mult = min(2**n, 8)
-            sequence += [
-                conv(
-                    ndf * nf_mult_prev,
-                    ndf * nf_mult,
-                    kernel_size=kw,
-                    stride=2,
-                    padding=padw,
-                    bias=use_bias),
-                norm_layer(ndf * nf_mult),
-                nn.LeakyReLU(0.2, True)
-            ]
+        norm_layer = self.get_nonspade_norm_layer(opt, 'spectralbatch')
+        sequence = [[nn.Conv3d(input_nc, nf, kernel_size=kw, stride=2, padding=padw),
+                     nn.LeakyReLU(0.2, False)]]
 
-        # Final Conv2d: 2 ** n * ndf -> 1, 4x4 kernels
-        sequence += [
-            conv(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
-        ]
-        if use_sigmoid:
-            sequence += [nn.Sigmoid()]
-        self.model = nn.Sequential(*sequence)
+        for n in range(1, opt.n_layers_D):
+            nf_prev = nf
+            nf = min(nf * 2, 512)
+            stride = 1 if n == opt.n_layers_D - 1 else 2
+            sequence += [[norm_layer(nn.Conv3d(nf_prev, nf, kernel_size=kw,
+                                               stride=stride, padding=padw)),
+                          nn.LeakyReLU(0.2, False)
+                          ]]
 
-    def forward(self, input_data):
-        return self.model(input_data)
+        sequence += [[nn.Conv3d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
 
+        # We divide the layers into groups to extract intermediate layer outputs
+        for n in range(len(sequence)):
+            self.add_module('model' + str(n), nn.Sequential(*sequence[n]))
 
-class CriticDiscriminator(nn.Module):
+    def get_nonspade_norm_layer(self, opt, norm_type='instance'):
+        # helper function to get # output channels of the previous layer
+        def get_out_channel(layer):
+            if hasattr(layer, 'out_channels'):
+                return getattr(layer, 'out_channels')
+            return layer.weight.size(0)
 
-    def __init__(self, opt):
-        super(CriticDiscriminator, self).__init__()
-        self.opt = opt
-        # Filters [256, 512, 1024]
-        # Input_dim = channels (Cx64x64)
-        # Output_dim = 1
-        self.main_module = nn.Sequential(
-            # Image (Cx32x32)
-            nn.Conv3d(in_channels=2, out_channels=256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_features=256),
-            nn.LeakyReLU(0.2, inplace=True),
+        # this function will be returned
+        def add_norm_layer(layer):
+            nonlocal norm_type
+            if norm_type.startswith('spectral'):
+                layer = spectral_norm(layer)
+                subnorm_type = norm_type[len('spectral'):]
 
-            # State (256x16x16)
-            nn.Conv3d(in_channels=256, out_channels=512, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_features=512),
-            nn.LeakyReLU(0.2, inplace=True),
+            if subnorm_type == 'none' or len(subnorm_type) == 0:
+                return layer
 
-            # State (512x8x8)
-            nn.Conv3d(in_channels=512, out_channels=1024, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_features=1024),
-            nn.LeakyReLU(0.2, inplace=True))
+            # remove bias in the previous layer, which is meaningless
+            # since it has no effect after normalization
+            if getattr(layer, 'bias', None) is not None:
+                delattr(layer, 'bias')
+                layer.register_parameter('bias', None)
 
-        # output of main module --> State (1024x4x4)
-        self.output = nn.Sequential(
-            # The output of D is no longer a probability, we do not apply sigmoid at the output of D.
-            nn.Conv3d(in_channels=1024, out_channels=1, kernel_size=4, stride=1, padding=0))
+            if subnorm_type == 'batch':
+                norm_layer = nn.BatchNorm3d(get_out_channel(layer), affine=True)
+            elif subnorm_type == 'instance':
+                norm_layer = nn.InstanceNorm3d(get_out_channel(layer), affine=False)
+            else:
+                raise ValueError('normalization layer %s is not recognized' % subnorm_type)
 
-    def forward(self, x):
-        x = self.main_module(x)
-        return self.output(x)
+            return nn.Sequential(layer, norm_layer)
 
+        return add_norm_layer
 
-class Critic(nn.Module):
-    def __init__(self):
-        super(Critic, self).__init__()
-        img_shape = (2, 128, 128, 128)
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(img_shape)), 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-        )
+    def compute_D_input_nc(self, opt):
+        input_nc = opt.label_nc + opt.output_nc
+        if opt.contain_dontcare_label:
+            input_nc += 1
+        if not opt.no_instance:
+            input_nc += 1
+        return input_nc
 
-    def forward(self, img):
-        img_flat = img.view(img.shape[0], -1)
-        validity = self.model(img_flat)
-        return validity
+    def forward(self, input):
+        results = [input]
+        for submodel in self.children():
+            intermediate_output = submodel(results[-1])
+            results.append(intermediate_output)
+
+        # get_intermediate_features = not self.opt.no_ganFeat_loss
+        # if get_intermediate_features:
+        #     return results[1:]
+        # else:
+        #     return results[-1]
+        return results[1:]
 
 
 class PixelDiscriminator(nn.Module):

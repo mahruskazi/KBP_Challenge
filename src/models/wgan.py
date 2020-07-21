@@ -7,6 +7,7 @@ import src.models.medicalzoo.medzoo as medzoo
 from src.dataloaders.kbp_dataset import KBPDataset
 from provided_code.general_functions import get_paths, sparse_vector_function
 from provided_code.dose_evaluation_class import EvaluateDose
+import torch.autograd as autograd
 import os
 import numpy as np
 import pandas as pd
@@ -23,10 +24,14 @@ class WGan(pl.LightningModule):
 
         self.generator = networks.define_G(self.opt)
 
-        self.discriminator = networks.CriticDiscriminator(self.opt)
+        self.discriminator = networks.define_D(self.opt)
 
-        self.one = torch.FloatTensor([1])
+        self.one = torch.tensor(1, dtype=torch.float).cuda()
         self.mone = self.one * -1
+
+        self.use_cuda = torch.cuda.is_available()
+        if self.use_cuda:
+            self.gpu = 0
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -49,8 +54,11 @@ class WGan(pl.LightningModule):
         else:
             raise Exception("Invalid optimizer ID")
 
+        shim = torch.FloatTensor([0.0]).cuda()
+        shim.requires_grad = True
+
         output = OrderedDict({
-            'loss': loss,
+            'loss': shim,
             'progress_bar': tqdm_dict,
             'log': tqdm_dict
         })
@@ -61,22 +69,27 @@ class WGan(pl.LightningModule):
         D_losses = {}
 
         for p in self.discriminator.parameters():
-            p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+            p.requires_grad = True
 
-        # Fake; stop backprop to the generator by detaching fake_B
-        fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
-        d_loss_fake = self.discriminator(fake_AB.detach())
-        d_loss_fake = d_loss_fake.mean(0).view(1)
-        d_loss_fake.backward(self.one)
+        # for p in self.discriminator.parameters():
+        #     p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+
         # Real
         real_AB = torch.cat((real_A, real_B), 1)
         d_loss_real = self.discriminator(real_AB)
-        d_loss_real = d_loss_real.mean(0).view(1)
+        d_loss_real = d_loss_real.mean()
         d_loss_real.backward(self.mone)
+        # Fake; stop backprop to the generator by detaching fake_B
+        fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
+        d_loss_fake = self.discriminator(fake_AB.detach())
+        d_loss_fake = d_loss_fake.mean()
+        d_loss_fake.backward(self.one)
 
-        d_loss = d_loss_fake - d_loss_real
+        gradient_penalty = self.calc_gradient_penalty(self.discriminator, real_AB.data, fake_AB.data)
+        gradient_penalty.backward()
         # for p in d_loss.parameters():
         #     p.requires_grad = False
+        d_loss = d_loss_fake - d_loss_real + gradient_penalty
         D_losses['d_loss'] = d_loss
         D_losses['Wasserstein_D'] = d_loss_real - d_loss_fake
 
@@ -86,18 +99,40 @@ class WGan(pl.LightningModule):
         """Calculate GAN, L1 and VGG loss for the generator"""
         G_losses = {}
 
+        for p in self.discriminator.parameters():
+            p.requires_grad = False
+
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((real_A, fake), 1)
-        with torch.no_grad():  # D requires no gradients when optimizing G
-            g_loss = self.discriminator(fake_AB)
-        g_loss = g_loss.mean().mean(0).view(1)
-        g_loss.backward(self.one)
-        # for p in g_loss.parameters():
-        #     p.requires_grad = False
+        g_loss = self.discriminator(fake_AB)
+        g_loss = g_loss.mean()
+        g_loss.backward(self.mone)
         g_cost = -g_loss
         G_losses['g_cost'] = g_cost
 
         return g_loss, G_losses
+
+    def calc_gradient_penalty(self, netD, real_data, fake_data):
+        # print real_data.size()
+        alpha = torch.rand(self.opt.batchSize, 2, 128, 128, 128)
+        alpha = alpha.cuda(self.gpu) if self.use_cuda else alpha
+
+        interpolates = alpha * real_data + ((1 - alpha) * fake_data)
+
+        if self.use_cuda:
+            interpolates = interpolates.cuda(self.gpu)
+        interpolates = autograd.Variable(interpolates, requires_grad=True)
+
+        disc_interpolates = netD(interpolates)
+
+        gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
+                                  grad_outputs=torch.ones(disc_interpolates.size()).cuda(self.gpu) if self.use_cuda else torch.ones(
+                                  disc_interpolates.size()),
+                                  create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+        LAMBDA = 10
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+        return gradient_penalty
 
     def configure_optimizers(self):
         beta2 = 0.999

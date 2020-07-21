@@ -22,12 +22,13 @@ class Pix2PixModel(pl.LightningModule):
 
         self.generator = networks.define_G(self.opt)
 
-        use_sigmoid = self.opt.no_lsgan
-        self.discriminator = networks.define_D(self.opt.input_nc + self.opt.output_nc, self.opt.ndf, self.opt.which_model_netD,
-                                               self.opt.n_layers_D, self.opt.norm, use_sigmoid, self.opt.init_type)
+        self.discriminator = networks.define_D(self.opt)
 
-        self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
-        self.loss = networks.get_loss(self.opt)
+        if self.opt.wasserstein:
+            self.criterionGAN = networks.get_loss('wasserstein')
+        else:
+            self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
+        self.loss = networks.get_loss(self.opt.loss_function)
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -73,6 +74,10 @@ class Pix2PixModel(pl.LightningModule):
         loss_D = sum(D_losses.values()).mean()
         D_losses['d_loss'] = loss_D
 
+        if self.opt.wasserstein:
+            for p in self.discriminator.parameters():
+                p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+
         return loss_D, D_losses
 
     def backward_G(self, fake, real_A, real_B):
@@ -100,27 +105,32 @@ class Pix2PixModel(pl.LightningModule):
     def configure_optimizers(self):
         beta2 = 0.999
 
-        opt_g = {
-            'optimizer': torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
-            'frequency': 1
-        }
-        opt_d = {
-            'optimizer': torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
-            'frequency': self.opt.n_critic
-        }
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
 
         sched_g = {
-            'scheduler': networks.get_scheduler(opt_g['optimizer'], self.opt),
+            'scheduler': networks.get_scheduler(opt_g, self.opt),
             'monitor': 'loss',
             'name': 'generator_lr'
         }
         sched_d = {
-            'scheduler': networks.get_scheduler(opt_d['optimizer'], self.opt),
+            'scheduler': networks.get_scheduler(opt_d, self.opt),
             'monitor': 'loss',
             'name': 'discriminator_lr'
         }
 
-        return [opt_g, opt_d], [sched_g, sched_d]
+        dict_g = {
+            'optimizer': torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': 1,
+            'lr_scheduler': sched_g
+        }
+        dict_d = {
+            'optimizer': torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'frequency': self.opt.n_critic,
+            'lr_scheduler': sched_d
+        }
+
+        return (dict_g, dict_d)
 
     def prepare_data(self):
         # Define parent directory
