@@ -158,6 +158,11 @@ class TrainOptions(BaseOptions):
             default=50,
             help='Pretrained resnet depth: 18|50')
         self.parser.add_argument(
+            '--num_D',
+            type=int,
+            default=1,
+            help='Number of discriminators used for training')
+        self.parser.add_argument(
             '--n_critic',
             type=int,
             default=1,
@@ -167,5 +172,10 @@ class TrainOptions(BaseOptions):
             type=float,
             default=0.01,
             help='clipping parameter for WGAN')
+        self.parser.add_argument(
+            '--no_perceptual_loss',
+            action='store_true',
+            help='do NOT use perceptual loss while training the generator'
+        )
 
         self.isTrain = True

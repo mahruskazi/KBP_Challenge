@@ -24,8 +24,9 @@ training_paths = plan_paths[:num_train_pats]
 args = ['--batchSize', '2',
         '--primary_directory', primary_directory,
         '--which_model_netG', 'unet_128_3d',
-        '--which_model_netD', 'n_layers_3d',
+        '--which_model_netD', 'multiscale',
         '--n_layers_D', '3',
+        '--num_D', '3',
         '--resnet_depth', '10',
         '--which_direction', 'AtoB',
         '--input_nc', '1',
@@ -55,7 +56,7 @@ print(model)
 # for param in model.parameters():
 #     print(param.requires_grad)
 # print(model)
-summary(model, (2, 128, 128, 128))
+# summary(model, (2, 128, 128, 128))
 
 # for i, batch in enumerate(tqdm(loader)):
 #     input_A = Variable(batch['ct'])

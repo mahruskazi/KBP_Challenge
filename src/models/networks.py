@@ -11,6 +11,7 @@ import src.models.medicalzoo.medzoo as medzoo
 import src.models.medicalzoo.losses3D as losses3D
 import copy
 import torch.nn.utils.spectral_norm as spectral_norm
+import torch.nn.functional as F
 
 #
 # Functions
@@ -152,10 +153,7 @@ def get_scheduler(optimizer, opt):
 
 
 def get_loss(loss_function):
-    ''' Rules for how to adjust the learning rate. Lambda: custom method to
-    change learning rate. StepLR: learning rate decays by gamma each step size.
-    Plateau: reduce once the quantity monitored has stopped decreasing.
-    '''
+
     if loss_function == 'L1':
         return nn.L1Loss()
     elif loss_function == 'L2':
@@ -166,8 +164,6 @@ def get_loss(loss_function):
         return lambda x, y: x.mean() * (-2 * int(y) + 1)
     elif loss_function == 'dice':
         return losses3D.DiceLoss(sigmoid_normalization=False)
-    elif loss_function == 'perceptual':
-        return PerceptualLoss(opt)
     else:
         return NotImplementedError(
             'loss function [{}] is not implemented'.format(
@@ -259,18 +255,11 @@ def define_D(opt):
     ''' Parses model parameters and defines the Discriminator module.
     '''
     netD = None
-    norm_layer = get_norm_layer(norm_type=opt.norm)
 
-    if opt.which_model_netD == 'n_layers_3d':
-        netD = NLayerDiscriminator(opt)
+    if opt.which_model_netD == 'n_layers_spectral':
+        netD = NLayerDiscriminatorSpectral(opt)
     elif opt.which_model_netD == 'multiscale':
-        netD = MultiscaleDiscriminator(
-            opt,
-            opt.input_nc,
-            opt.ndf,
-            opt.n_layers_D,
-            norm_layer=norm_layer,
-            use_sigmoid=not opt.no_lsgan)
+        netD = MultiscaleDiscriminator(opt)
     else:
         raise NotImplementedError(
             'Discriminator model name [{}] is not recognized'.format(
@@ -375,44 +364,35 @@ class PerceptualLoss(nn.Module):
     def __init__(self, opt):
         super(PerceptualLoss, self).__init__()
 
-        model = resnet3d.generate_model(model_depth=18,
-                                        n_classes=700,
-                                        n_input_channels=3,
-                                        shortcut_type='B',
-                                        conv1_t_size=7,
-                                        conv1_t_stride=1,
-                                        no_max_pool=False,
-                                        widen_factor=1.0)
+        self.opt = opt
+        pretrain_path = '{}/pretrained_models/resnet_{}_23dataset.pth'.format(self.opt.primary_directory, 18)
+        print('loading pretrained model {}'.format(pretrain_path))
+        no_cuda = not torch.cuda.is_available()
 
-        path = '{}/pretrained_models/r3d18_K_200ep.pth'.format(opt.primary_directory)
-        pretrained_model = self._load_pretrained_model(model, path, 'resnet', 400)
-        modules = list(pretrained_model.children())[:-2]
+        resnet = resnet3d.resnet18(shortcut_type='A',
+                                   no_cuda=no_cuda)
 
-        self.model = nn.Sequential(*modules)
+        pretrain = torch.load(pretrain_path, map_location=('cpu' if no_cuda else None))
+
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in pretrain['state_dict'].items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
+
+        resnet.load_state_dict(new_state_dict)
+        for param in resnet.parameters():
+            param.requires_grad = False
+
+        self.model = resnet
         self.criterion = nn.L1Loss()
-        # self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
-
-    def _load_pretrained_model(self, model, pretrain_path, model_name, n_finetune_classes):
-        if pretrain_path:
-            print('loading pretrained model {}'.format(pretrain_path))
-            pretrain = torch.load(pretrain_path, map_location='cpu')
-
-            model.load_state_dict(pretrain['state_dict'])
-            tmp_model = model
-            if model_name == 'densenet':
-                tmp_model.classifier = nn.Linear(tmp_model.classifier.in_features, n_finetune_classes)
-            else:
-                tmp_model.fc = nn.Linear(tmp_model.fc.in_features, n_finetune_classes)
-
-        return model
+        self.weights = [1.0 / 128, 1.0 / 64, 1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2, 1.0]
 
     def forward(self, x, y):
-        x = x.repeat(1, 3, 1, 1, 1)
-        y = y.repeat(1, 3, 1, 1, 1)
-        x_vgg, y_vgg = self.model(x), self.model(y)
+        x_resnet, y_resnet = self.model(x), self.model(y)
         loss = 0
-        for i in range(len(x_vgg)):
-            loss += self.criterion(x_vgg[i], y_vgg[i].detach())
+        for i in range(len(x_resnet)):
+            loss += self.weights[i] * self.criterion(x_resnet[i], y_resnet[i].detach())
         return loss
 
 
@@ -646,7 +626,7 @@ class UnetGenerator(nn.Module):
             input_nc=input_nc,
             submodule=unet_block,
             outermost=True,
-            use_tanh=False,
+            use_tanh=use_tanh,
             norm_layer=norm_layer,
             conv=conv,
             deconv=deconv)
@@ -980,54 +960,44 @@ class ResnetGenerator(nn.Module):
 
 
 class MultiscaleDiscriminator(nn.Module):
-    def __init__(self, opt, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm3d,
-                 use_sigmoid=False, num_D=3, getIntermFeat=False):
-        super(MultiscaleDiscriminator, self).__init__()
-        self.num_D = num_D
-        self.n_layers = n_layers
-        self.getIntermFeat = getIntermFeat
+    def __init__(self, opt):
+        super().__init__()
+        self.opt = opt
 
-        for i in range(num_D):
-            netD = NLayerDiscriminator(opt)
-            if getIntermFeat:
-                for j in range(n_layers+2):
-                    setattr(self, 'scale'+str(i)+'_layer'+str(j), getattr(netD, 'model'+str(j)))
-            else:
-                setattr(self, 'layer'+str(i), netD.model)
+        for i in range(opt.num_D):
+            subnetD = self.create_single_discriminator(opt)
+            self.add_module('discriminator_%d' % i, subnetD)
 
-        self.downsample = nn.AvgPool3d(3, stride=2, padding=1, count_include_pad=False)
+    def create_single_discriminator(self, opt):
+        return NLayerDiscriminatorSpectral(opt)
 
-    def singleD_forward(self, model, input):
-        if self.getIntermFeat:
-            result = [input]
-            for i in range(len(model)):
-                result.append(model[i](result[-1]))
-            return result[1:]
-        else:
-            return [model(input)]
+    def downsample(self, input):
+        return F.avg_pool3d(input, kernel_size=3,
+                            stride=2, padding=1,
+                            count_include_pad=False)
 
+    # Returns list of lists of discriminator outputs.
+    # The final result is of size opt.num_D x opt.n_layers_D
     def forward(self, input):
-        num_D = self.num_D
         result = []
-        input_downsampled = input
-        for i in range(num_D):
-            if self.getIntermFeat:
-                model = [getattr(self, 'scale'+str(num_D-1-i)+'_layer'+str(j)) for j in range(self.n_layers+2)]
-            else:
-                model = getattr(self, 'layer'+str(num_D-1-i))
-            result.append(self.singleD_forward(model, input_downsampled))
-            if i != (num_D-1):
-                input_downsampled = self.downsample(input_downsampled)
+        # get_intermediate_features = not self.opt.no_ganFeat_loss
+        for name, D in self.named_children():
+            out = D(input)
+            # if not get_intermediate_features:
+            #     out = [out]
+            result.append(out)
+            input = self.downsample(input)
+
         return result
 
 
-class NLayerDiscriminator(nn.Module):
+class NLayerDiscriminatorSpectral(nn.Module):
     ''' PatchGAN discriminator, supposed to work on patches within the full image
     to evaluate whether the style is transferred everywhere.
     '''
 
     def __init__(self, opt):
-        super(NLayerDiscriminator, self).__init__()
+        super(NLayerDiscriminatorSpectral, self).__init__()
         self.opt = opt
 
         kw = 4

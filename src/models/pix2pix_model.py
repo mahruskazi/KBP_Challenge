@@ -28,7 +28,11 @@ class Pix2PixModel(pl.LightningModule):
             self.criterionGAN = networks.get_loss('wasserstein')
         else:
             self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
-        self.loss = networks.get_loss(self.opt.loss_function)
+
+        if not self.opt.no_perceptual_loss:
+            self.criterionResnet = networks.PerceptualLoss(self.opt)
+
+        self.criterionFeat = networks.get_loss(self.opt.loss_function)
 
     def get_inputs(self, data):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
@@ -42,12 +46,10 @@ class Pix2PixModel(pl.LightningModule):
     def training_step(self, batch, batch_id, optimizer_idx):
         ct_image, dose = self.get_inputs(batch)
 
-        fake = self.forward(ct_image)
-
         if optimizer_idx == 0:
-            loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
+            loss, tqdm_dict = self.backward_G(ct_image, dose)
         elif optimizer_idx == 1:
-            loss, tqdm_dict = self.backward_D(fake, ct_image, dose)
+            loss, tqdm_dict = self.backward_D(ct_image, dose)
         else:
             raise Exception("Invalid optimizer ID")
 
@@ -58,49 +60,86 @@ class Pix2PixModel(pl.LightningModule):
         })
         return output
 
-    def backward_D(self, fake, real_A, real_B):
+    def backward_D(self, ct_image, real_dose):
         """Calculate GAN loss for the discriminator"""
         D_losses = {}
 
-        # Fake; stop backprop to the generator by detaching fake_B
-        fake_AB = torch.cat((real_A, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
-        pred_fake = self.discriminator(fake_AB.detach())
-        D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, False)
-        # Real
-        real_AB = torch.cat((real_A, real_B), 1)
-        pred_real = self.discriminator(real_AB)
-        D_losses['loss_D_real'] = self.criterionGAN(pred_real, True)
-        # combine loss and calculate gradients
-        loss_D = sum(D_losses.values()).mean()
-        D_losses['d_loss'] = loss_D
+        with torch.no_grad():
+            fake_dose = self.forward(ct_image)
+            fake_dose = fake_dose.detach()
+            fake_dose.requires_grad_()
 
-        if self.opt.wasserstein:
-            for p in self.discriminator.parameters():
-                p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+        pred_fake, pred_real = self.discriminate(ct_image, fake_dose, real_dose)
 
-        return loss_D, D_losses
+        D_losses['D_Fake'] = self.criterionGAN(pred_fake, False)
+        D_losses['D_real'] = self.criterionGAN(pred_real, True)
 
-    def backward_G(self, fake, real_A, real_B):
+        D_loss = sum(D_losses.values()).mean()
+        D_losses['D_loss'] = D_loss
+
+        return D_loss, D_losses
+
+    def backward_G(self, ct_image, real_dose):
         """Calculate GAN, L1 and VGG loss for the generator"""
         G_losses = {}
 
-        # First, G(A) should fake the discriminator
-        fake_AB = torch.cat((real_A, fake), 1)
-        with torch.no_grad():  # D requires no gradients when optimizing G
-            pred_fake = self.discriminator(fake_AB)
-        G_losses['loss_G_GAN'] = self.criterionGAN(pred_fake, True)
-        # Second, G(A) = B
+        fake_dose = self.forward(ct_image)
 
-        if self.opt.loss_function == 'dice':
-            G_losses[self.opt.loss_function], _ = self.loss(fake, real_B)
-        else:
-            G_losses[self.opt.loss_function] = self.loss(fake, real_B) * self.opt.lambda_A
+        pred_fake, pred_real = self.discriminate(ct_image, fake_dose, real_dose)
 
-        # combine loss and calculate gradients
+        G_losses['GAN'] = self.criterionGAN(pred_fake, True)
+
+        num_D = len(pred_fake)
+        print(num_D)
+        GAN_Feat_loss = torch.FloatTensor(1).fill_(0)
+        GAN_Feat_loss = GAN_Feat_loss.type_as(ct_image)
+        for i in range(num_D):  # for each discriminator
+            # last output is the final prediction, so we exclude it
+            num_intermediate_outputs = len(pred_fake[i]) - 1
+            for j in range(num_intermediate_outputs):  # for each layer output
+                unweighted_loss = self.criterionFeat(pred_fake[i][j], pred_real[i][j].detach())
+                GAN_Feat_loss += unweighted_loss * self.opt.lambda_A / num_D
+        G_losses['GAN_Feat'] = GAN_Feat_loss
+
+        if not self.opt.no_perceptual_loss:
+            G_losses['perceptual'] = self.criterionResnet(fake_dose, real_dose) * self.opt.lambda_perceptual
+
         loss_G = sum(G_losses.values()).mean()
-        G_losses['g_loss'] = loss_G
+        G_losses['loss_G'] = loss_G
 
         return loss_G, G_losses
+
+    def discriminate(self, ct_image, fake_dose, real_dose):
+        fake_concat = torch.cat([ct_image, fake_dose], dim=1)
+        real_concat = torch.cat([ct_image, real_dose], dim=1)
+
+        # In Batch Normalization, the fake and real images are
+        # recommended to be in the same batch to avoid disparate
+        # statistics in fake and real images.
+        # So both fake and real images are fed to D all at once.
+        fake_and_real = torch.cat([fake_concat, real_concat], dim=0)
+
+        discriminator_out = self.discriminator(fake_and_real)
+
+        pred_fake, pred_real = self.divide_pred(discriminator_out)
+
+        return pred_fake, pred_real
+
+    # Take the prediction of fake and real images from the combined batch
+    def divide_pred(self, pred):
+        # the prediction contains the intermediate outputs of multiscale GAN,
+        # so it's usually a list
+        if type(pred) == list:
+            fake = []
+            real = []
+            for p in pred:
+                fake.append([tensor[:tensor.size(0) // 2] for tensor in p])
+                real.append([tensor[tensor.size(0) // 2:] for tensor in p])
+        else:
+            fake = pred[:pred.size(0) // 2]
+            real = pred[pred.size(0) // 2:]
+
+        return fake, real
 
     def configure_optimizers(self):
         beta2 = 0.999
