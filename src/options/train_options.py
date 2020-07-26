@@ -139,8 +139,8 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument(
             '--norm_D',
             type=str,
-            default='spectralinstance',
-            help='loss function: batch_3d|spectralinstance')
+            default='spectralbatch',
+            help='loss function: batch|spectralinstance|spectralbatch')
         self.parser.add_argument(
             '--training_size',
             type=int,

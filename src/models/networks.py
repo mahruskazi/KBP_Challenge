@@ -256,8 +256,8 @@ def define_D(opt):
     '''
     netD = None
 
-    if opt.which_model_netD == 'n_layers_spectral':
-        netD = NLayerDiscriminatorSpectral(opt)
+    if opt.which_model_netD == 'n_layers_3d':
+        netD = NLayerDiscriminator(opt)
     elif opt.which_model_netD == 'multiscale':
         netD = MultiscaleDiscriminator(opt)
     else:
@@ -959,125 +959,100 @@ class ResnetGenerator(nn.Module):
         return net
 
 
-class MultiscaleDiscriminator(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.opt = opt
-
-        for i in range(opt.num_D):
-            subnetD = self.create_single_discriminator(opt)
-            self.add_module('discriminator_%d' % i, subnetD)
-
-    def create_single_discriminator(self, opt):
-        return NLayerDiscriminatorSpectral(opt)
-
-    def downsample(self, input):
-        return F.avg_pool3d(input, kernel_size=3,
-                            stride=2, padding=1,
-                            count_include_pad=False)
-
-    # Returns list of lists of discriminator outputs.
-    # The final result is of size opt.num_D x opt.n_layers_D
-    def forward(self, input):
-        result = []
-        # get_intermediate_features = not self.opt.no_ganFeat_loss
-        for name, D in self.named_children():
-            out = D(input)
-            # if not get_intermediate_features:
-            #     out = [out]
-            result.append(out)
-            input = self.downsample(input)
-
-        return result
-
-
-class NLayerDiscriminatorSpectral(nn.Module):
+class NLayerDiscriminator(nn.Module):
     ''' PatchGAN discriminator, supposed to work on patches within the full image
     to evaluate whether the style is transferred everywhere.
     '''
 
     def __init__(self, opt):
-        super(NLayerDiscriminatorSpectral, self).__init__()
-        self.opt = opt
+        super(NLayerDiscriminator, self).__init__()
+        norm_layer = get_norm_layer(norm_type=opt.norm)
+        if type(norm_layer) == functools.partial:
+            use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
+                norm_layer.func == nn.InstanceNorm3d)
+        else:
+            use_bias = (norm_layer == nn.InstanceNorm2d) or (
+                norm_layer == nn.InstanceNorm3d)
 
+        conv = nn.Conv3d
+        n_layers = opt.n_layers_D
+        use_sigmoid = opt.no_lsgan
         kw = 4
-        padw = int(np.ceil((kw - 1.0) / 2))
-        nf = self.opt.ndf
-        input_nc = 2
+        padw = 1
+        sequence = [
+            conv(opt.input_nc + opt.output_nc, opt.ndf, kernel_size=kw, stride=2, padding=padw),
+            nn.LeakyReLU(0.2, True)
+        ]
 
-        norm_layer = self.get_nonspade_norm_layer(opt, 'spectralbatch')
-        sequence = [[nn.Conv3d(input_nc, nf, kernel_size=kw, stride=2, padding=padw),
-                     nn.LeakyReLU(0.2, False)]]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):
+            # each Conv followed with a norm_layer and LeakyReLU
+            nf_mult_prev = nf_mult
+            nf_mult = min(2**n, 8)
+            sequence += [
+                conv(
+                    opt.ndf * nf_mult_prev,
+                    opt.ndf * nf_mult,
+                    kernel_size=kw,
+                    stride=2,
+                    padding=padw,
+                    bias=use_bias),
+                norm_layer(opt.ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
 
-        for n in range(1, opt.n_layers_D):
-            nf_prev = nf
-            nf = min(nf * 2, 512)
-            stride = 1 if n == opt.n_layers_D - 1 else 2
-            sequence += [[norm_layer(nn.Conv3d(nf_prev, nf, kernel_size=kw,
-                                               stride=stride, padding=padw)),
-                          nn.LeakyReLU(0.2, False)
-                          ]]
+        # Final Conv2d: 2 ** n * ndf -> 1, 4x4 kernels
+        sequence += [
+            conv(opt.ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
+        ]
+        if use_sigmoid:
+            sequence += [nn.Sigmoid()]
+        self.model = nn.Sequential(*sequence)
 
-        sequence += [[nn.Conv3d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
+    def forward(self, input_data):
+        return self.model(input_data)
 
-        # We divide the layers into groups to extract intermediate layer outputs
-        for n in range(len(sequence)):
-            self.add_module('model' + str(n), nn.Sequential(*sequence[n]))
 
-    def get_nonspade_norm_layer(self, opt, norm_type='instance'):
-        # helper function to get # output channels of the previous layer
-        def get_out_channel(layer):
-            if hasattr(layer, 'out_channels'):
-                return getattr(layer, 'out_channels')
-            return layer.weight.size(0)
+class MultiscaleDiscriminator(nn.Module):
+    def __init__(self, opt, getIntermFeat=False):
+        super(MultiscaleDiscriminator, self).__init__()
+        self.num_D = opt.num_D
+        self.n_layers = opt.n_layers_D
+        self.getIntermFeat = getIntermFeat
 
-        # this function will be returned
-        def add_norm_layer(layer):
-            nonlocal norm_type
-            if norm_type.startswith('spectral'):
-                layer = spectral_norm(layer)
-                subnorm_type = norm_type[len('spectral'):]
-
-            if subnorm_type == 'none' or len(subnorm_type) == 0:
-                return layer
-
-            # remove bias in the previous layer, which is meaningless
-            # since it has no effect after normalization
-            if getattr(layer, 'bias', None) is not None:
-                delattr(layer, 'bias')
-                layer.register_parameter('bias', None)
-
-            if subnorm_type == 'batch':
-                norm_layer = nn.BatchNorm3d(get_out_channel(layer), affine=True)
-            elif subnorm_type == 'instance':
-                norm_layer = nn.InstanceNorm3d(get_out_channel(layer), affine=False)
+        for i in range(self.num_D):
+            netD = NLayerDiscriminator(opt)
+            if getIntermFeat:
+                for j in range(self.n_layers+2):
+                    setattr(self, 'scale'+str(i)+'_layer'+str(j), getattr(netD, 'model'+str(j)))
             else:
-                raise ValueError('normalization layer %s is not recognized' % subnorm_type)
+                setattr(self, 'layer'+str(i), netD.model)
 
-            return nn.Sequential(layer, norm_layer)
+        self.downsample = nn.AvgPool3d(3, stride=2, padding=1, count_include_pad=False)
 
-        return add_norm_layer
-
-    def compute_D_input_nc(self, opt):
-        input_nc = opt.label_nc + opt.output_nc
-        if opt.contain_dontcare_label:
-            input_nc += 1
-        if not opt.no_instance:
-            input_nc += 1
-        return input_nc
+    def singleD_forward(self, model, input):
+        if self.getIntermFeat:
+            result = [input]
+            for i in range(len(model)):
+                result.append(model[i](result[-1]))
+            return result[1:]
+        else:
+            return [model(input)]
 
     def forward(self, input):
-        results = [input]
-        for submodel in self.children():
-            intermediate_output = submodel(results[-1])
-            results.append(intermediate_output)
-
-        # get_intermediate_features = not self.opt.no_ganFeat_loss
-        # if get_intermediate_features:
-        #     return results[1:]
-        # else:
-        #     return results[-1]
-        return results[1:]
+        num_D = self.num_D
+        result = []
+        input_downsampled = input
+        for i in range(num_D):
+            if self.getIntermFeat:
+                model = [getattr(self, 'scale'+str(num_D-1-i)+'_layer'+str(j)) for j in range(self.n_layers+2)]
+            else:
+                model = getattr(self, 'layer'+str(num_D-1-i))
+            result.append(self.singleD_forward(model, input_downsampled))
+            if i != (num_D-1):
+                input_downsampled = self.downsample(input_downsampled)
+        return result
 
 
 class PixelDiscriminator(nn.Module):
