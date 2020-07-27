@@ -72,9 +72,14 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument(
             '--beta1', type=float, default=0.5, help='momentum term of adam')
         self.parser.add_argument(
-            '--lr',
+            '--lr_G',
             type=float,
-            default=0.0002,
+            default=0.0001,
+            help='initial learning rate for adam')
+        self.parser.add_argument(
+            '--lr_D',
+            type=float,
+            default=0.0004,
             help='initial learning rate for adam')
         self.parser.add_argument(
             '--no_lsgan',
@@ -140,7 +145,12 @@ class TrainOptions(BaseOptions):
             '--norm_D',
             type=str,
             default='spectralbatch',
-            help='loss function: batch|spectralinstance|spectralbatch')
+            help='loss function: batch|spectralbatch')
+        self.parser.add_argument(
+            '--norm_G',
+            type=str,
+            default='spectralbatch',
+            help='loss function: batch|spectralbatch')
         self.parser.add_argument(
             '--training_size',
             type=int,
@@ -168,6 +178,11 @@ class TrainOptions(BaseOptions):
             default=1,
             help='Number of times iterations of discriminator per generator iteration')
         self.parser.add_argument(
+            '--n_generator',
+            type=int,
+            default=1,
+            help='Number of times iterations of generator per discriminator iteration')
+        self.parser.add_argument(
             '--weight_cliping_limit',
             type=float,
             default=0.01,
@@ -177,5 +192,7 @@ class TrainOptions(BaseOptions):
             action='store_true',
             help='do NOT use perceptual loss while training the generator'
         )
+        self.parser.add_argument('--inst_noise_sigma', type=float, default=0.0, help='Noise to add to the discriminator input, 0.0 for no noise')
+        self.parser.add_argument('--inst_noise_sigma_iters', type=int, default=200, help='Number of iterations to bring noise to 0.0')
 
         self.isTrain = True

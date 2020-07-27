@@ -9,9 +9,7 @@ from torchvision import models
 from src.models import resnet3d, resnetunet
 import src.models.medicalzoo.medzoo as medzoo
 import src.models.medicalzoo.losses3D as losses3D
-import copy
 import torch.nn.utils.spectral_norm as spectral_norm
-import torch.nn.functional as F
 
 #
 # Functions
@@ -177,6 +175,7 @@ def define_G(opt):
     norm_layer = get_norm_layer(norm_type=opt.norm)
     use_dropout = not opt.no_dropout
     use_tanh = not opt.no_scaling
+    use_spectral = True if opt.norm_G == 'spectralbatch' else False
 
     if opt.which_model_netG == 'resnet_unet':
         # netG = resnetunet.UNetWithResnet50Encoder(opt)
@@ -195,7 +194,8 @@ def define_G(opt):
             norm_layer=norm_layer,
             use_dropout=use_dropout,
             conv=nn.Conv3d,
-            deconv=nn.ConvTranspose3d)
+            deconv=nn.ConvTranspose3d,
+            use_spectral=use_spectral)
         init_weights(netG, init_type=opt.init_type)
     elif opt.which_model_netG == 'unet_3d':
         netG = medzoo.UNet3D(opt.input_nc, opt.output_nc)
@@ -568,6 +568,7 @@ class UnetGenerator(nn.Module):
                  ngf=64,
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
+                 use_spectral=False,
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         '''
@@ -585,7 +586,8 @@ class UnetGenerator(nn.Module):
             norm_layer=norm_layer,
             innermost=True,
             conv=conv,
-            deconv=deconv)
+            deconv=deconv,
+            use_spectral=use_spectral)
         for i in range(num_downs - 5):
             unet_block = UnetSkipConnectionBlock(
                 ngf * 8,
@@ -595,7 +597,8 @@ class UnetGenerator(nn.Module):
                 norm_layer=norm_layer,
                 use_dropout=use_dropout,
                 conv=conv,
-                deconv=deconv)
+                deconv=deconv,
+                use_spectral=use_spectral)
         unet_block = UnetSkipConnectionBlock(
             ngf * 4,
             ngf * 8,
@@ -603,7 +606,8 @@ class UnetGenerator(nn.Module):
             submodule=unet_block,
             norm_layer=norm_layer,
             conv=conv,
-            deconv=deconv)
+            deconv=deconv,
+            use_spectral=use_spectral)
         unet_block = UnetSkipConnectionBlock(
             ngf * 2,
             ngf * 4,
@@ -611,7 +615,8 @@ class UnetGenerator(nn.Module):
             submodule=unet_block,
             norm_layer=norm_layer,
             conv=conv,
-            deconv=deconv)
+            deconv=deconv,
+            use_spectral=use_spectral)
         unet_block = UnetSkipConnectionBlock(
             ngf,
             ngf * 2,
@@ -619,7 +624,8 @@ class UnetGenerator(nn.Module):
             submodule=unet_block,
             norm_layer=norm_layer,
             conv=conv,
-            deconv=deconv)
+            deconv=deconv,
+            use_spectral=use_spectral)
         unet_block = UnetSkipConnectionBlock(
             output_nc,
             ngf,
@@ -629,7 +635,8 @@ class UnetGenerator(nn.Module):
             use_tanh=use_tanh,
             norm_layer=norm_layer,
             conv=conv,
-            deconv=deconv)
+            deconv=deconv,
+            use_spectral=use_spectral)
 
         self.model = unet_block
 
@@ -653,6 +660,7 @@ class UnetSkipConnectionBlock(nn.Module):
                  norm_layer=nn.BatchNorm2d,
                  use_dropout=False,
                  use_tanh=True,
+                 use_spectral=False,
                  conv=nn.Conv2d,
                  deconv=nn.ConvTranspose2d):
         super(UnetSkipConnectionBlock, self).__init__()
@@ -668,6 +676,7 @@ class UnetSkipConnectionBlock(nn.Module):
             input_nc = outer_nc
         # basic building blocks
         # Conv2d: inputC -> innerC, 4x4 kernel size, 2 stride, 1 padding
+
         downconv = conv(
             input_nc,
             inner_nc,
@@ -680,6 +689,9 @@ class UnetSkipConnectionBlock(nn.Module):
         uprelu = nn.ReLU(True)
         upnorm = norm_layer(outer_nc)
 
+        if use_spectral:
+            print('Generator using spectral normalization')
+
         if outermost:
             # Conv2d: inputC -> innerC, 4x4 kernel size, 2 stride, 1 padding
             # then submodule
@@ -688,10 +700,15 @@ class UnetSkipConnectionBlock(nn.Module):
             upconv = deconv(
                 inner_nc * 2, outer_nc, kernel_size=4, stride=2, padding=1)
             down = [downconv]
-            if use_tanh:
-                up = [uprelu, upconv, nn.Tanh()]
+
+            if use_spectral:
+                up = [uprelu, spectral_norm(upconv)]
             else:
                 up = [uprelu, upconv]
+
+            if use_tanh:
+                up += [nn.Tanh()]
+
             model = down + [submodule] + up
         elif innermost:
             # LeakyReLU -> Conv2d
@@ -704,8 +721,12 @@ class UnetSkipConnectionBlock(nn.Module):
                 stride=2,
                 padding=1,
                 bias=use_bias)
-            down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
+            if use_spectral:
+                down = [downrelu, spectral_norm(downconv)]
+                up = [uprelu, spectral_norm(upconv), upnorm]
+            else:
+                down = [downrelu, downconv]
+                up = [uprelu, upconv, upnorm]
             model = down + up
         else:
             # LeakyReLU -> Conv2d -> Normalize
@@ -718,8 +739,13 @@ class UnetSkipConnectionBlock(nn.Module):
                 stride=2,
                 padding=1,
                 bias=use_bias)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
+
+            if use_spectral:
+                down = [downrelu, spectral_norm(downconv), downnorm]
+                up = [uprelu, spectral_norm(upconv), upnorm]
+            else:
+                down = [downrelu, downconv, downnorm]
+                up = [uprelu, upconv, upnorm]
 
             if use_dropout:
                 model = down + [submodule] + up + [nn.Dropout(0.5)]
@@ -990,17 +1016,31 @@ class NLayerDiscriminator(nn.Module):
             # each Conv followed with a norm_layer and LeakyReLU
             nf_mult_prev = nf_mult
             nf_mult = min(2**n, 8)
-            sequence += [
-                conv(
-                    opt.ndf * nf_mult_prev,
-                    opt.ndf * nf_mult,
-                    kernel_size=kw,
-                    stride=2,
-                    padding=padw,
-                    bias=use_bias),
-                norm_layer(opt.ndf * nf_mult),
-                nn.LeakyReLU(0.2, True)
-            ]
+            if opt.norm_D == 'spectralbatch':
+                print("Using spectral normalization")
+                sequence += [
+                    spectral_norm(conv(
+                        opt.ndf * nf_mult_prev,
+                        opt.ndf * nf_mult,
+                        kernel_size=kw,
+                        stride=2,
+                        padding=padw,
+                        bias=use_bias)),
+                    norm_layer(opt.ndf * nf_mult),
+                    nn.LeakyReLU(0.2, True)
+                ]
+            else:
+                sequence += [
+                    conv(
+                        opt.ndf * nf_mult_prev,
+                        opt.ndf * nf_mult,
+                        kernel_size=kw,
+                        stride=2,
+                        padding=padw,
+                        bias=use_bias),
+                    norm_layer(opt.ndf * nf_mult),
+                    nn.LeakyReLU(0.2, True)
+                ]
 
         # Final Conv2d: 2 ** n * ndf -> 1, 4x4 kernels
         sequence += [

@@ -40,6 +40,9 @@ class Pix2PixModel(pl.LightningModule):
         ct_image, dose = self.get_inputs(batch)
 
         fake = self.forward(ct_image)
+        # fake = fake.view(fake.size()[0], 1, 128, 128, 128, 1)
+        # fake = fake * batch['possible_dose_mask']
+        # fake = fake.view(fake.size()[0], 1, 128, 128, 128).float()
 
         if optimizer_idx == 0:
             loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
@@ -60,8 +63,8 @@ class Pix2PixModel(pl.LightningModule):
         D_losses = {}
 
         # Fake; stop backprop to the generator by detaching fake_B
-        fake_AB = torch.cat((ct_image, fake.detach()), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
-        pred_fake = self.discriminator(fake_AB)
+        fake_AB = torch.cat((ct_image, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
+        pred_fake = self.discriminator(fake_AB.detach())
         D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, False)
         # Real
         real_AB = torch.cat((ct_image, dose), 1)
@@ -95,8 +98,8 @@ class Pix2PixModel(pl.LightningModule):
     def configure_optimizers(self):
         beta2 = 0.999
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2))
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr_G, betas=(self.opt.beta1, beta2))
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr_D, betas=(self.opt.beta1, beta2))
 
         sched_g = {
             'scheduler': networks.get_scheduler(opt_g, self.opt),
@@ -110,12 +113,12 @@ class Pix2PixModel(pl.LightningModule):
         }
 
         dict_g = {
-            'optimizer': torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
-            'frequency': 1,
+            'optimizer': opt_g,
+            'frequency': self.opt.n_generator,
             'lr_scheduler': sched_g
         }
         dict_d = {
-            'optimizer': torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, beta2)),
+            'optimizer': opt_d,
             'frequency': self.opt.n_critic,
             'lr_scheduler': sched_d
         }
