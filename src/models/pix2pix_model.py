@@ -6,9 +6,11 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 from src.dataloaders.kbp_dataset import KBPDataset
+from src.dataloaders.data_augmentation import RandomFlip
 from provided_code.general_functions import get_paths, sparse_vector_function
 from provided_code.dose_evaluation_class import EvaluateDose
 import src.models.networks as networks
+from torchvision import transforms
 import os
 
 
@@ -162,7 +164,7 @@ class Pix2PixModel(pl.LightningModule):
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
     def train_dataloader(self):
-        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model')
+        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([RandomFlip()]))
         print("Number of training patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True, num_workers=0)
 

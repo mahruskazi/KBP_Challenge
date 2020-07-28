@@ -7,7 +7,7 @@ class KBPDataset(Dataset):
 
     """Face Landmarks dataset."""
 
-    def __init__(self, opt, file_paths_list, patient_shape=(128, 128, 128), mode_name='training_model', patient_list=None):
+    def __init__(self, opt, file_paths_list, patient_shape=(128, 128, 128), mode_name='training_model', patient_list=None, transform=None):
         """Initialize the DataLoader class, which loads the data for OpenKBP
         :param file_paths_list: list of the directories or single files where data for each patient is stored
         :param patient_shape: the shape of the patient data
@@ -15,6 +15,7 @@ class KBPDataset(Dataset):
         """
         # Set file_loader specific attributes
         self.opt = opt
+        self.transform = transform
         self.rois = dict(oars=['Brainstem', 'SpinalCord', 'RightParotid', 'LeftParotid',
                                'Esophagus', 'Larynx', 'Mandible'], targets=['PTV56', 'PTV63', 'PTV70'])
 
@@ -193,4 +194,8 @@ class KBPDataset(Dataset):
 
         # Load the requested files as a tensors
         loaded_data = self.load_data(file_paths_to_load)
+
+        if self.transform:
+            loaded_data = self.transform(loaded_data)
+
         return loaded_data

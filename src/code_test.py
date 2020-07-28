@@ -1,4 +1,5 @@
 from src.dataloaders.kbp_dataset import KBPDataset
+from src.dataloaders.data_augmentation import RandomFlip
 from torch.utils.data import DataLoader
 import torch
 from provided_code.general_functions import get_paths
@@ -9,6 +10,7 @@ from src.models import networks
 from src.options.train_options import TrainOptions
 from torchsummary import summary
 import src.models.medicalzoo.medzoo as medzoo
+from torchvision import transforms
 
 
 primary_directory = '/Users/mkazi/Google Drive/KBP_Challenge'
@@ -34,37 +36,42 @@ args = ['--batchSize', '2',
         '--lr_policy', 'plateau',
         '--epoch_count', '200',
         '--load_epoch', '-1',
-        '--lr', '0.01',
+        '--lr_G', '0.01',
         '--lr_max', '0.01',
         '--lr_step_size', '25',
         '--loss_function', 'smoothed_L1',
         '--init_type', 'xavier',
         '--no_scaling',
+        '--no_normalization',
         '--patience', '5',
         '--n_critic', '5',
         '--weight_cliping_limit', '0.01']
 
 opt = TrainOptions().parse(args)
-dataset = KBPDataset(opt, plan_paths)
+transform = transforms.Compose([
+    RandomFlip()
+])
+dataset = KBPDataset(opt, plan_paths, transform=transform)
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-model = networks.define_D(opt)
+# model = networks.define_D(opt)
 # model = medzoo.VNet(in_channels=1, classes=1)
 # model = vae_model.VAEModel(opt)
-print(model)
+# print(model)
 
 # for param in model.parameters():
 #     print(param.requires_grad)
 # print(model)
 # summary(model, (2, 128, 128, 128))
 
-# for i, batch in enumerate(tqdm(loader)):
-#     input_A = Variable(batch['ct'])
-#     input_A = input_A[..., 0].float()
+for i, batch in enumerate(tqdm(loader)):
+    input_A = Variable(batch['ct'])
+    # input_A = input_A[..., 0].float()
 
-#     # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
-#     # print(image_3_channel.size())
+    # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
+    # print(image_3_channel.size())
 
-#     output = model(input_A)
-#     print(output.size())
-#     break
+    # output = model(input_A)
+    print(input_A.size())
+    print(batch['ct'].shape)
+    break
