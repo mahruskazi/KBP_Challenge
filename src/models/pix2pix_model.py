@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 from src.dataloaders.kbp_dataset import KBPDataset
-from src.dataloaders.data_augmentation import RandomFlip
+from src.dataloaders.data_augmentation import ToTensor, ToRightShape, RandomAugment
 from provided_code.general_functions import get_paths, sparse_vector_function
 from provided_code.dose_evaluation_class import EvaluateDose
 import src.models.networks as networks
@@ -35,7 +35,10 @@ class Pix2PixModel(pl.LightningModule):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
         input_B = data['dose']
 
-        return Variable(input_A)[..., 0].float(), Variable(input_B)[..., 0].float()
+        input_A.requires_grad = True
+        input_B.requires_grad = True
+
+        return input_A, input_B
 
     def forward(self, z):
         return self.generator(z)
@@ -48,9 +51,7 @@ class Pix2PixModel(pl.LightningModule):
         self.inst_noise_std = torch.full((ct_image.size()[0], 2, 128, 128, 128), self.inst_noise_sigma_curr, dtype=torch.float).type_as(ct_image)
 
         fake = self.forward(ct_image)
-        fake = fake.view(fake.size()[0], 1, 128, 128, 128, 1)
         fake = fake * batch['possible_dose_mask']
-        fake = fake.view(fake.size()[0], 1, 128, 128, 128).float()
 
         if optimizer_idx == 0:
             loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
@@ -164,7 +165,11 @@ class Pix2PixModel(pl.LightningModule):
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
     def train_dataloader(self):
-        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([RandomFlip()]))
+        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([
+            ToTensor(),
+            RandomAugment(mask_size=self.opt.cut_blur_mask, augment=not self.opt.no_augment),
+            ToRightShape()
+        ]))
         print("Number of training patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True, num_workers=0)
 
@@ -175,14 +180,13 @@ class Pix2PixModel(pl.LightningModule):
 
         pat_id = np.squeeze(batch['patient_list'])
         pat_path = np.squeeze(batch['patient_path_list']).tolist()
-        image = Variable(batch['ct'])
-        image = image[..., 0].float()
+        image = batch['ct']
 
         generated = self.generator(image)
         if not self.opt.no_scaling:
             generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
-        dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
-        dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
+        dose_pred_gy = generated * batch['possible_dose_mask']
+        dose_pred_gy = dose_pred_gy.view(1, 1, 128, 128, 128, 1)
         # Prepare the dose to save
         dose_pred_gy = np.squeeze(dose_pred_gy)
         dose_pred_gy = dose_pred_gy.cpu().numpy()
@@ -234,7 +238,10 @@ class Pix2PixModel(pl.LightningModule):
         return results
 
     def val_dataloader(self):
-        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
+        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction', transform=transforms.Compose([
+            ToTensor(),
+            ToRightShape()
+        ]))
         print("Number of validation patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=1, shuffle=False)
 

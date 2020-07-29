@@ -192,7 +192,13 @@ class TrainOptions(BaseOptions):
             action='store_true',
             help='do NOT use perceptual loss while training the generator'
         )
+        self.parser.add_argument(
+            '--no_augment',
+            action='store_true',
+            help='do NOT augment the data for training'
+        )
         self.parser.add_argument('--inst_noise_sigma', type=float, default=0.0, help='Noise to add to the discriminator input, 0.0 for no noise')
         self.parser.add_argument('--inst_noise_sigma_iters', type=int, default=200, help='Number of iterations to bring noise to 0.0')
+        self.parser.add_argument('--cut_blur_mask', type=int, default=64, help='Size of the image to CutBlur (cubed)')
 
         self.isTrain = True

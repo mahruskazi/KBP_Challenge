@@ -1,5 +1,5 @@
 from src.dataloaders.kbp_dataset import KBPDataset
-from src.dataloaders.data_augmentation import RandomFlip
+from src.dataloaders.data_augmentation import RandomFlip, ToTensor, GaussianSmoothing, ToRightShape, CutBlur, RandomAugment
 from torch.utils.data import DataLoader
 import torch
 from provided_code.general_functions import get_paths
@@ -49,7 +49,10 @@ args = ['--batchSize', '2',
 
 opt = TrainOptions().parse(args)
 transform = transforms.Compose([
-    RandomFlip()
+    ToTensor(),
+    RandomAugment(mask_size=64),
+    ToRightShape()
+    # GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
 ])
 dataset = KBPDataset(opt, plan_paths, transform=transform)
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
@@ -65,7 +68,7 @@ loader = DataLoader(dataset, batch_size=1, shuffle=False)
 # summary(model, (2, 128, 128, 128))
 
 for i, batch in enumerate(tqdm(loader)):
-    input_A = Variable(batch['ct'])
+    input_A = batch['ct']
     # input_A = input_A[..., 0].float()
 
     # image_3_channel = input_A.repeat(1, 3, 1, 1, 1)
@@ -73,5 +76,4 @@ for i, batch in enumerate(tqdm(loader)):
 
     # output = model(input_A)
     print(input_A.size())
-    print(batch['ct'].shape)
-    break
+    # break
