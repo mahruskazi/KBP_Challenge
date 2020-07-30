@@ -50,9 +50,9 @@ args = ['--batchSize', '2',
 opt = TrainOptions().parse(args)
 transform = transforms.Compose([
     ToTensor(),
-    RandomAugment(mask_size=64),
+    # RandomAugment(opt, mask_size=64),
+    GaussianSmoothing(channels=1, kernel_size=9, sigma=3.0, dim=3),
     ToRightShape()
-    # GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
 ])
 dataset = KBPDataset(opt, plan_paths, transform=transform)
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
@@ -76,4 +76,4 @@ for i, batch in enumerate(tqdm(loader)):
 
     # output = model(input_A)
     print(input_A.size())
-    # break
+    break

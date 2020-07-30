@@ -148,11 +148,9 @@ class KBPDataset(Dataset):
                 data = np.array(loaded_file[key]['data'])
 
                 np.put(shaped_data[key], indices.astype(np.int64), data.astype(np.int64))
-                if not self.opt.no_normalization:
-                    if key == 'ct':
-                        shaped_data[key] = shaped_data[key].clip(None, 4071)
-                        shaped_data[key] = (shaped_data[key] - np.mean(shaped_data[key])) / np.std(shaped_data[key])
-                        # shaped_data[key] = 2.0*shaped_data[key]/4071.0 - 1.0
+                if key == 'ct':
+                    shaped_data[key] = shaped_data[key].clip(None, 4071)
+
                 if not self.opt.no_scaling:
                     if key == 'dose' and self.mode_name != 'evaluation':
                         # shaped_data[key] = shaped_data[key]/80.0

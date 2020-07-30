@@ -25,8 +25,21 @@ class RandomFlip(object):
             return sample
 
 
+class NormalizeData(object):
+    def __init__(self, opt):
+        self.opt = opt
+
+    def __call__(self, sample):
+        if not self.opt.no_normalization:
+            if 'ct' in sample:
+                sample['ct'] = (sample['ct'] - torch.mean(sample['ct'])) / torch.std(sample['ct'])
+
+        return sample
+
+
 class RandomAugment(object):
-    def __init__(self, mask_size, augment=True):
+    def __init__(self, opt, mask_size, augment=True):
+        self.opt = opt
         self.augment = augment
         self.cut_blur = CutBlur(mask_size)
 
@@ -48,7 +61,8 @@ class RandomAugment(object):
 class CutBlur(object):
     def __init__(self, mask_size):
         self.mask_size = mask_size
-        self.blur = GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
+        # self.blur = GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
+        self.blur = GaussianSmoothing(channels=1, kernel_size=15, sigma=5.0, dim=3)
 
     def __call__(self, sample):
         if self.mask_size != 0:
@@ -86,6 +100,7 @@ class GaussianSmoothing(object):
     """
     def __init__(self, channels, kernel_size, sigma, dim=2):
         super(GaussianSmoothing, self).__init__()
+        # ps = 7 if kernel_size == 15 else 1
         if isinstance(kernel_size, numbers.Number):
             kernel_size = [kernel_size] * dim
         if isinstance(sigma, numbers.Number):
@@ -114,7 +129,7 @@ class GaussianSmoothing(object):
         # self.register_buffer('weight', kernel)
         self.groups = channels
 
-        self.reflection_pad = nn.ReplicationPad3d(1)
+        self.reflection_pad = nn.ReplicationPad3d(4)
 
         if dim == 1:
             self.conv = F.conv1d
@@ -129,7 +144,9 @@ class GaussianSmoothing(object):
 
     def __call__(self, sample):
         ct_image = self.reflection_pad(sample['ct'].view(1, 1, 128, 128, 128))
+        # print(ct_image.size())
         ct_image = self.conv(ct_image, weight=self.kernel, groups=self.groups)
+        # print(ct_image.size())
         sample['ct'] = ct_image.view(128, 128, 128)
         return sample
 

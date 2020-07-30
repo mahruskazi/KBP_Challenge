@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 from src.dataloaders.kbp_dataset import KBPDataset
-from src.dataloaders.data_augmentation import ToTensor, ToRightShape, RandomAugment
+from src.dataloaders.data_augmentation import ToTensor, ToRightShape, RandomAugment, NormalizeData
 from provided_code.general_functions import get_paths, sparse_vector_function
 from provided_code.dose_evaluation_class import EvaluateDose
 import src.models.networks as networks
@@ -167,7 +167,8 @@ class Pix2PixModel(pl.LightningModule):
     def train_dataloader(self):
         dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([
             ToTensor(),
-            RandomAugment(mask_size=self.opt.cut_blur_mask, augment=not self.opt.no_augment),
+            RandomAugment(self.opt, mask_size=self.opt.cut_blur_mask, augment=not self.opt.no_augment),
+            NormalizeData(self.opt),
             ToRightShape()
         ]))
         print("Number of training patients: %d" % len(dataset))
@@ -240,6 +241,7 @@ class Pix2PixModel(pl.LightningModule):
     def val_dataloader(self):
         dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction', transform=transforms.Compose([
             ToTensor(),
+            NormalizeData(self.opt),
             ToRightShape()
         ]))
         print("Number of validation patients: %d" % len(dataset))
