@@ -72,6 +72,8 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument(
             '--beta1', type=float, default=0.5, help='momentum term of adam')
         self.parser.add_argument(
+            '--beta2', type=float, default=0.999, help='The exponential decay rate for the second-moment estimates')
+        self.parser.add_argument(
             '--lr_G',
             type=float,
             default=0.0001,

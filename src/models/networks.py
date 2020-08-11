@@ -258,6 +258,8 @@ def define_D(opt):
 
     if opt.which_model_netD == 'n_layers_3d':
         netD = NLayerDiscriminator(opt)
+    elif opt.which_model_netD == 'pixel':
+        netD = PixelDiscriminator(opt)
     elif opt.which_model_netD == 'multiscale':
         netD = MultiscaleDiscriminator(opt)
     else:
@@ -576,6 +578,7 @@ class UnetGenerator(nn.Module):
             num_downs:  number of downsamplings in the Unet.
         '''
         super(UnetGenerator, self).__init__()
+        self.use_tanh = use_tanh
 
         # blocks are built recursively starting from innermost moving out
         unet_block = UnetSkipConnectionBlock(
@@ -641,7 +644,12 @@ class UnetGenerator(nn.Module):
         self.model = unet_block
 
     def forward(self, input_data):
-        return self.model(input_data)
+        out = self.model(input_data)
+
+        if self.use_tanh:
+            out = 40.0*out + 40.0
+
+        return out
 
 
 class UnetSkipConnectionBlock(nn.Module):
@@ -794,17 +802,17 @@ class ResNetUNet(nn.Module):
                                        no_cuda=no_cuda,
                                        num_seg_classes=2)
 
-        pretrain = torch.load(pretrain_path, map_location=('cpu' if no_cuda else None))
+        # pretrain = torch.load(pretrain_path, map_location=('cpu' if no_cuda else None))
 
-        from collections import OrderedDict
-        new_state_dict = OrderedDict()
-        for k, v in pretrain['state_dict'].items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
+        # from collections import OrderedDict
+        # new_state_dict = OrderedDict()
+        # for k, v in pretrain['state_dict'].items():
+        #     name = k[7:]  # remove `module.`
+        #     new_state_dict[name] = v
 
-        resnet.load_state_dict(new_state_dict)
-        for param in resnet.parameters():
-            param.requires_grad = False
+        # resnet.load_state_dict(new_state_dict)
+        # for param in resnet.parameters():
+        #     param.requires_grad = False
 
         self.base_layers = list(resnet.children())
 
@@ -1029,6 +1037,17 @@ class NLayerDiscriminator(nn.Module):
                     norm_layer(opt.ndf * nf_mult),
                     nn.LeakyReLU(0.2, True)
                 ]
+            elif opt.norm_D == 'none':
+                sequence += [
+                    conv(
+                        opt.ndf * nf_mult_prev,
+                        opt.ndf * nf_mult,
+                        kernel_size=kw,
+                        stride=2,
+                        padding=padw,
+                        bias=use_bias),
+                    nn.LeakyReLU(0.2, True)
+                ]
             else:
                 sequence += [
                     conv(
@@ -1107,13 +1126,13 @@ class PixelDiscriminator(nn.Module):
         - Sigmoid
     '''
 
-    def __init__(self,
-                 input_nc,
-                 ndf=64,
-                 norm_layer=nn.BatchNorm2d,
-                 use_sigmoid=False,
-                 conv=nn.Conv2d):
+    def __init__(self, opt):
         super(PixelDiscriminator, self).__init__()
+
+        norm_layer = nn.BatchNorm3d
+        conv = nn.Conv3d
+        use_sigmoid = False
+
         if type(norm_layer) == functools.partial:
             use_bias = (norm_layer.func == nn.InstanceNorm2d) or (
                 norm_layer.func == nn.InstanceNorm3d)
@@ -1122,18 +1141,18 @@ class PixelDiscriminator(nn.Module):
                 norm_layer == nn.InstanceNorm3d)
 
         self.net = [
-            conv(input_nc, ndf, kernel_size=1, stride=1, padding=0),
+            conv(2, opt.ndf, kernel_size=1, stride=1, padding=0),
             nn.LeakyReLU(0.2, True),
             conv(
-                ndf,
-                ndf * 2,
+                opt.ndf,
+                opt.ndf * 2,
                 kernel_size=1,
                 stride=1,
                 padding=0,
                 bias=use_bias),
-            norm_layer(ndf * 2),
+            norm_layer(opt.ndf * 2),
             nn.LeakyReLU(0.2, True),
-            conv(ndf * 2, 1, kernel_size=1, strid=1, padding=0, bias=use_bias)
+            conv(opt.ndf * 2, 1, kernel_size=1, stride=1, padding=0, bias=use_bias)
         ]
 
         if use_sigmoid:
@@ -1142,7 +1161,7 @@ class PixelDiscriminator(nn.Module):
         self.net = nn.Sequential(*self.net)
 
     def forward(self, input_data):
-        return self.model(input_data)
+        return self.net(input_data)
 
 
 class UnetCNNGenerator(nn.Module):

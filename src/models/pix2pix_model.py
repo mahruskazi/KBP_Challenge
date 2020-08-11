@@ -1,5 +1,7 @@
 import torch
-from torch.autograd import Variable
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from numpy import random
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import numpy as np
@@ -76,21 +78,33 @@ class Pix2PixModel(pl.LightningModule):
 
         return results
 
+    # def on_after_backward(self):
+        # self.plot_grad_flow(self.discriminator.named_parameters())
+        # torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.opt.weight_cliping_limit)
+
     def backward_D(self, fake, ct_image, dose):
         """Calculate GAN loss for the discriminator"""
         D_losses = {}
         inst_noise = torch.normal(mean=self.inst_noise_mean, std=self.inst_noise_std).type_as(ct_image)
 
+        pred_fake_label = False
+        pred_real_label = True
+
+        if self.current_epoch > self.opt.inst_noise_sigma_iters:
+            if random.randint(10) == 0:
+                pred_fake_label = True
+                pred_real_label = False
+
         # Fake; stop backprop to the generator by detaching fake_B
         fake_AB = torch.cat((ct_image, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
         pred_fake = self.discriminator(fake_AB.detach() + inst_noise)
-        D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, False)
+        D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, pred_fake_label)
         # Real
         real_AB = torch.cat((ct_image, dose), 1)
         pred_real = self.discriminator(real_AB + inst_noise)
-        D_losses['loss_D_real'] = self.criterionGAN(pred_real, True)
+        D_losses['loss_D_real'] = self.criterionGAN(pred_real, pred_real_label)
         # combine loss and calculate gradients
-        loss_D = sum(D_losses.values()).mean()
+        loss_D = sum(D_losses.values())/len(D_losses)
         D_losses['d_loss'] = loss_D
 
         return loss_D, D_losses
@@ -110,16 +124,44 @@ class Pix2PixModel(pl.LightningModule):
         G_losses['loss_G_Feat'] = self.criterionFeat(fake, dose) * self.opt.lambda_A
 
         # combine loss and calculate gradients
-        loss_G = sum(G_losses.values()).mean()
+        loss_G = sum(G_losses.values())/len(G_losses)
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
 
-    def configure_optimizers(self):
-        beta2 = 0.999
+    def plot_grad_flow(self, named_parameters):
+        '''Plots the gradients flowing through different layers in the net during training.
+        Can be used for checking for possible gradient vanishing / exploding problems.
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr_G, betas=(self.opt.beta1, beta2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr_D, betas=(self.opt.beta1, beta2))
+        Usage: Plug this function in Trainer class after loss.backwards() as
+        "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+        ave_grads = []
+        max_grads = []
+        layers = []
+        for n, p in named_parameters:
+            if(p.requires_grad) and ("bias" not in n):
+                layers.append(n)
+                ave_grads.append(p.grad.abs().mean())
+                max_grads.append(p.grad.abs().max())
+        plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+        plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+        plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k")
+        plt.xticks(range(0, len(ave_grads), 1), layers, rotation="vertical")
+        plt.xlim(left=0, right=len(ave_grads))
+        plt.ylim(bottom=-0.001, top=0.02)  # zoom in on the lower gradient regions
+        plt.xlabel("Layers")
+        plt.ylabel("average gradient")
+        plt.title("Gradient flow")
+        plt.grid(True)
+        plt.legend([Line2D([0], [0], color="c", lw=4),
+                    Line2D([0], [0], color="b", lw=4),
+                    Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
+
+        self.logger.experiment.log_figure(figure=plt)
+
+    def configure_optimizers(self):
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr_G, betas=(self.opt.beta1, self.opt.beta2))
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr_D, betas=(self.opt.beta1, self.opt.beta2))
 
         sched_g = {
             'scheduler': networks.get_scheduler(opt_g, self.opt),
@@ -184,8 +226,8 @@ class Pix2PixModel(pl.LightningModule):
         image = batch['ct']
 
         generated = self.generator(image)
-        if not self.opt.no_scaling:
-            generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        # if not self.opt.no_scaling:
+        #     generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
         dose_pred_gy = generated * batch['possible_dose_mask']
         dose_pred_gy = dose_pred_gy.view(1, 1, 128, 128, 128, 1)
         # Prepare the dose to save

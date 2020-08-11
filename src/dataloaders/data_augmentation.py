@@ -42,6 +42,7 @@ class RandomAugment(object):
         self.opt = opt
         self.augment = augment
         self.cut_blur = CutBlur(mask_size)
+        self.blur = GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
 
     def __call__(self, sample):
         mode = random.randint(3)
@@ -53,6 +54,8 @@ class RandomAugment(object):
                 sample['possible_dose_mask'] = sample['possible_dose_mask'].flip(2)
             elif mode == 1:
                 sample = self.cut_blur(sample)
+            elif mode == 2:
+                sample = self.blur(sample)
             return sample
 
         return sample
@@ -62,7 +65,7 @@ class CutBlur(object):
     def __init__(self, mask_size):
         self.mask_size = mask_size
         # self.blur = GaussianSmoothing(channels=1, kernel_size=3, sigma=1.0, dim=3)
-        self.blur = GaussianSmoothing(channels=1, kernel_size=15, sigma=5.0, dim=3)
+        self.blur = GaussianSmoothing(channels=1, kernel_size=9, sigma=3.0, dim=3)
 
     def __call__(self, sample):
         if self.mask_size != 0:
@@ -100,7 +103,7 @@ class GaussianSmoothing(object):
     """
     def __init__(self, channels, kernel_size, sigma, dim=2):
         super(GaussianSmoothing, self).__init__()
-        # ps = 7 if kernel_size == 15 else 1
+        ps = 4 if kernel_size == 9 else 1
         if isinstance(kernel_size, numbers.Number):
             kernel_size = [kernel_size] * dim
         if isinstance(sigma, numbers.Number):
@@ -129,7 +132,7 @@ class GaussianSmoothing(object):
         # self.register_buffer('weight', kernel)
         self.groups = channels
 
-        self.reflection_pad = nn.ReplicationPad3d(4)
+        self.reflection_pad = nn.ReplicationPad3d(ps)
 
         if dim == 1:
             self.conv = F.conv1d

@@ -12,6 +12,8 @@ import os
 import numpy as np
 import pandas as pd
 from collections import OrderedDict
+from torchvision import transforms
+from src.dataloaders.data_augmentation import ToTensor, ToRightShape, RandomAugment, NormalizeData
 
 
 class WGan(pl.LightningModule):
@@ -37,7 +39,10 @@ class WGan(pl.LightningModule):
         input_A = data['ct']  # Returns tensors of size [batch_size, 1, 128, 128, 128, 1]
         input_B = data['dose']
 
-        return Variable(input_A)[..., 0].float(), Variable(input_B)[..., 0].float()
+        input_A.requires_grad = True
+        input_B.requires_grad = True
+
+        return input_A, input_B
 
     def forward(self, z):
         return self.generator(z)
@@ -46,6 +51,7 @@ class WGan(pl.LightningModule):
         ct_image, dose = self.get_inputs(batch)
 
         fake = self.forward(ct_image)
+        fake = fake * batch['possible_dose_mask']
 
         if optimizer_idx == 0:
             loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
@@ -71,8 +77,8 @@ class WGan(pl.LightningModule):
         for p in self.discriminator.parameters():
             p.requires_grad = True
 
-        for p in self.discriminator.parameters():
-            p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
+        # for p in self.discriminator.parameters():
+        #     p.data.clamp_(-self.opt.weight_cliping_limit, self.opt.weight_cliping_limit)
 
         # Real
         real_AB = torch.cat((real_A, real_B), 1)
@@ -85,11 +91,11 @@ class WGan(pl.LightningModule):
         d_loss_fake = d_loss_fake.mean()
         d_loss_fake.backward(self.one)
 
-        # gradient_penalty = self.calc_gradient_penalty(self.discriminator, real_AB.data, fake_AB.data)
-        # gradient_penalty.backward()
+        gradient_penalty = self.calc_gradient_penalty(self.discriminator, fake.size()[0], real_AB.data, fake_AB.data)
+        gradient_penalty.backward()
         # for p in d_loss.parameters():
         #     p.requires_grad = False
-        d_loss = d_loss_fake - d_loss_real  # + gradient_penalty
+        d_loss = d_loss_fake - d_loss_real + gradient_penalty
         D_losses['d_loss'] = d_loss
         D_losses['Wasserstein_D'] = d_loss_real - d_loss_fake
 
@@ -112,9 +118,9 @@ class WGan(pl.LightningModule):
 
         return g_loss, G_losses
 
-    def calc_gradient_penalty(self, netD, real_data, fake_data):
+    def calc_gradient_penalty(self, netD, batchSize, real_data, fake_data):
         # print real_data.size()
-        alpha = torch.rand(self.opt.batchSize, 2, 128, 128, 128)
+        alpha = torch.rand(batchSize, 2, 128, 128, 128)
         alpha = alpha.cuda(self.gpu) if self.use_cuda else alpha
 
         interpolates = alpha * real_data + ((1 - alpha) * fake_data)
@@ -135,10 +141,9 @@ class WGan(pl.LightningModule):
         return gradient_penalty
 
     def configure_optimizers(self):
-        beta2 = 0.999
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr_G, betas=(self.opt.beta1, beta2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr_D, betas=(self.opt.beta1, beta2))
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=self.opt.lr_G, betas=(self.opt.beta1, self.opt.beta2))
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=self.opt.lr_D, betas=(self.opt.beta1, self.opt.beta2))
 
         sched_g = {
             'scheduler': networks.get_scheduler(opt_g, self.opt),
@@ -184,7 +189,12 @@ class WGan(pl.LightningModule):
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
     def train_dataloader(self):
-        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model')
+        dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([
+            ToTensor(),
+            RandomAugment(self.opt, mask_size=self.opt.cut_blur_mask, augment=not self.opt.no_augment),
+            NormalizeData(self.opt),
+            ToRightShape()
+        ]))
         print("Number of training patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=self.opt.batchSize, shuffle=True, num_workers=0)
 
@@ -195,14 +205,13 @@ class WGan(pl.LightningModule):
 
         pat_id = np.squeeze(batch['patient_list'])
         pat_path = np.squeeze(batch['patient_path_list']).tolist()
-        image = Variable(batch['ct'])
-        image = image[..., 0].float()
+        image = batch['ct']
 
         generated = self.generator(image)
-        if not self.opt.no_scaling:
-            generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
-        dose_pred_gy = generated.view(1, 1, 128, 128, 128, 1)
-        dose_pred_gy = dose_pred_gy * batch['possible_dose_mask']
+        # if not self.opt.no_scaling:
+        #     generated = 40.0*generated + 40.0  # Scale back dose to 0 - 80
+        dose_pred_gy = generated * batch['possible_dose_mask']
+        dose_pred_gy = dose_pred_gy.view(1, 1, 128, 128, 128, 1)
         # Prepare the dose to save
         dose_pred_gy = np.squeeze(dose_pred_gy)
         dose_pred_gy = dose_pred_gy.cpu().numpy()
@@ -254,7 +263,11 @@ class WGan(pl.LightningModule):
         return results
 
     def val_dataloader(self):
-        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction')
+        dataset = KBPDataset(self.opt, self.hold_out_paths, mode_name='dose_prediction', transform=transforms.Compose([
+            ToTensor(),
+            NormalizeData(self.opt),
+            ToRightShape()
+        ]))
         print("Number of validation patients: %d" % len(dataset))
         return DataLoader(dataset, batch_size=1, shuffle=False)
 
