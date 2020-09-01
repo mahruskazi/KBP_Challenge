@@ -127,6 +127,8 @@ class HighResNet3D(BaseModel):
         else:
             self.conv_out = Cov1x1x1(self.dil4_channels, self.classes)
 
+        self.final_activation = nn.Tanh()
+
     def shortcut_pad(self, x, desired_channels):
         if self.shortcut_type == 'A':
             batch_size, channels, dim0, dim1, dim2 = x.shape
@@ -185,6 +187,7 @@ class HighResNet3D(BaseModel):
         x_dil2_3, x_dil2_2 = self.dilation2(x_red_3, x_red_2)
         x_dil4 = self.dilation4(x_dil2_3, x_dil2_2)
         y = self.conv_out(x_dil4)
+        y = self.final_activation(y)
         return y
 
     def test(self):

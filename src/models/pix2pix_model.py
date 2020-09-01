@@ -28,7 +28,7 @@ class Pix2PixModel(pl.LightningModule):
 
         self.discriminator = networks.define_D(self.opt)
 
-        self.criterionGAN = networks.GANLoss(use_lsgan=not self.opt.no_lsgan)
+        self.criterionGAN = networks.GANLoss(use_lsgan=True, target_real_label=0.9)
         self.criterionFeat = networks.get_loss(self.opt.loss_function)
 
         self.inst_noise_sigma_curr = 0.0
@@ -263,21 +263,16 @@ class Pix2PixModel(pl.LightningModule):
 
         dose_evaluator = EvaluateDose(data_loader_hold_out_eval, hold_out_prediction_loader)
 
+        dvh_score = -1
+        dose_score = -1
+
         if not data_loader_hold_out_eval.file_paths_list:
             print('No patient information was given to calculate metrics')
-            results = {
-                'dvh_score': -1,
-                'dose_score': -1
-            }
         else:
             dvh_score, dose_score = dose_evaluator.make_metrics()
 
-            results = {
-                'dvh_score': dvh_score,
-                'dose_score': dose_score
-            }
+        results = {"log": {"dose_score": torch.tensor(dose_score).cuda(), "dvh_score": torch.tensor(dvh_score).cuda()}}
         print(results)
-        self.logger.experiment.log_metrics(results)
         return results
 
     def val_dataloader(self):

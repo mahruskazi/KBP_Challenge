@@ -1,0 +1,6 @@
+numpy==1.18.5
+torch==1.6.0+cu101
+torchvision==0.7.0+cu101
+pytorch_lightning==0.8.4
+comet-ml==3.2.0
+torchsummary==1.5.1

@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import init
 import numpy as np
 import functools
+import random
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import models
@@ -206,6 +207,9 @@ def define_G(opt):
     elif opt.which_model_netG == 'vnet_heavy':
         netG = medzoo.VNetHeavy(in_channels=1, classes=1, elu=False)
         init_weights(netG, init_type=opt.init_type)
+    elif opt.which_model_netG == 'vnet_light':
+        netG = medzoo.VNetLight(in_channels=1, classes=1, elu=False)
+        init_weights(netG, init_type=opt.init_type)
     elif opt.which_model_netG == 'skipdensenet':
         netG = medzoo.SkipDenseNet3D(in_channels=1, growth_rate=16, num_init_features=32, drop_rate=0.1, classes=1)
         init_weights(netG, init_type=opt.init_type)
@@ -331,12 +335,10 @@ class GANLoss(nn.Module):
     def get_target_tensor(self, input, target_is_real):
         target_tensor = None
         if target_is_real:
-            create_label = ((self.real_label_var is None) or
-                            (self.real_label_var.numel() != input.numel()))
-            if create_label:
-                real_tensor = self.Tensor(input.size()).fill_(self.real_label)
-                real_tensor = real_tensor.type_as(input)
-                self.real_label_var = Variable(real_tensor, requires_grad=False)
+
+            real_tensor = self.Tensor(input.size()).fill_(random.uniform(0.8, 1.2))
+            real_tensor = real_tensor.type_as(input)
+            self.real_label_var = Variable(real_tensor, requires_grad=False)
             target_tensor = self.real_label_var
         else:
             create_label = ((self.fake_label_var is None) or
@@ -991,6 +993,57 @@ class ResnetGenerator(nn.Module):
             nn.BatchNorm3d(out_channels)
         )
         return net
+
+
+class NLayerDiscriminatorSpade(nn.Module):
+
+    def __init__(self, opt):
+        super(NLayerDiscriminatorSpade).__init__()
+        self.opt = opt
+
+        kw = 4
+        padw = int(np.ceil((kw - 1.0) / 2))
+        nf = opt.ndf
+        input_nc = 2
+
+        norm_layer = get_norm_layer(norm_type=opt.norm)
+        sequence = [[nn.Conv3d(input_nc, nf, kernel_size=kw, stride=2, padding=padw),
+                     nn.LeakyReLU(0.2, False)]]
+
+        for n in range(1, opt.n_layers_D):
+            nf_prev = nf
+            nf = min(nf * 2, 512)
+            stride = 1 if n == opt.n_layers_D - 1 else 2
+
+            if opt.norm_D == 'spectralbatch':
+                print("Using spectral normalization")
+                sequence += [[spectral_norm(nn.Conv3d(nf_prev, nf, kernel_size=kw,
+                                                      stride=stride, padding=padw)),
+                              norm_layer(nf),
+                              nn.LeakyReLU(0.2, False)]]
+            else:
+                sequence += [[nn.Conv3d(nf_prev, nf, kernel_size=kw,
+                                                      stride=stride, padding=padw),
+                              norm_layer(nf),
+                              nn.LeakyReLU(0.2, False)]]
+
+        sequence += [[nn.Conv3d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
+
+        # We divide the layers into groups to extract intermediate layer outputs
+        for n in range(len(sequence)):
+            self.add_module('model' + str(n), nn.Sequential(*sequence[n]))
+
+    def forward(self, input):
+        results = [input]
+        for submodel in self.children():
+            intermediate_output = submodel(results[-1])
+            results.append(intermediate_output)
+
+        get_intermediate_features = not self.opt.no_ganFeat_loss
+        if get_intermediate_features:
+            return results[1:]
+        else:
+            return results[-1]
 
 
 class NLayerDiscriminator(nn.Module):
