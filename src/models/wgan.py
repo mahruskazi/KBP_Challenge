@@ -16,6 +16,8 @@ from torchvision import transforms
 from src.dataloaders.data_augmentation import ToTensor, ToRightShape, RandomAugment, NormalizeData
 
 
+# Modified version of the improved WGAN found here: https://github.com/caogang/wgan-gp
+# Converted to be used for Pytorch Lightning
 class WGan(pl.LightningModule):
 
     def __init__(self, opt, model_name='wgan_default', stage='training'):

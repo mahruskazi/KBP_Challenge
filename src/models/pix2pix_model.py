@@ -45,9 +45,11 @@ class Pix2PixModel(pl.LightningModule):
     def forward(self, z):
         return self.generator(z)
 
+    # Called every training iteration
     def training_step(self, batch, batch_id, optimizer_idx):
         ct_image, dose = self.get_inputs(batch)
 
+        # Create the instance noise vectors based on specfied inst_noise_sigma
         self.inst_noise_sigma_curr = 0 if self.current_epoch > self.opt.inst_noise_sigma_iters else (1 - self.current_epoch/self.opt.inst_noise_sigma_iters)*self.opt.inst_noise_sigma
         self.inst_noise_mean = torch.full((ct_image.size()[0], 2, 128, 128, 128), 0, dtype=torch.float).type_as(ct_image)
         self.inst_noise_std = torch.full((ct_image.size()[0], 2, 128, 128, 128), self.inst_noise_sigma_curr, dtype=torch.float).type_as(ct_image)
@@ -55,9 +57,9 @@ class Pix2PixModel(pl.LightningModule):
         fake = self.forward(ct_image)
         fake = fake * batch['possible_dose_mask']
 
-        if optimizer_idx == 0:
+        if optimizer_idx == 0:  # Generator step
             loss, tqdm_dict = self.backward_G(fake, ct_image, dose)
-        elif optimizer_idx == 1:
+        elif optimizer_idx == 1:  # Discriminator step
             loss, tqdm_dict = self.backward_D(fake, ct_image, dose)
         else:
             raise Exception("Invalid optimizer ID")
@@ -85,26 +87,26 @@ class Pix2PixModel(pl.LightningModule):
     def backward_D(self, fake, ct_image, dose):
         """Calculate GAN loss for the discriminator"""
         D_losses = {}
-        inst_noise = torch.normal(mean=self.inst_noise_mean, std=self.inst_noise_std).type_as(ct_image)
+        inst_noise = torch.normal(mean=self.inst_noise_mean, std=self.inst_noise_std).type_as(ct_image)  # Create the noise tensor
 
         pred_fake_label = False
         pred_real_label = True
 
-        if self.current_epoch > self.opt.inst_noise_sigma_iters:
+        if self.current_epoch > self.opt.inst_noise_sigma_iters:  # Change the labels for fake/real occasionally
             if random.randint(10) == 0:
                 pred_fake_label = True
                 pred_real_label = False
 
         # Fake; stop backprop to the generator by detaching fake_B
         fake_AB = torch.cat((ct_image, fake), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
-        pred_fake = self.discriminator(fake_AB.detach() + inst_noise)
+        pred_fake = self.discriminator(fake_AB.detach() + inst_noise)  # Add noise to discriminator input to make its life harder
         D_losses['loss_D_fake'] = self.criterionGAN(pred_fake, pred_fake_label)
         # Real
         real_AB = torch.cat((ct_image, dose), 1)
         pred_real = self.discriminator(real_AB + inst_noise)
         D_losses['loss_D_real'] = self.criterionGAN(pred_real, pred_real_label)
         # combine loss and calculate gradients
-        loss_D = sum(D_losses.values())/len(D_losses)
+        loss_D = sum(D_losses.values())/len(D_losses)  # Loss is the average of the real and fake losses
         D_losses['d_loss'] = loss_D
 
         return loss_D, D_losses
@@ -112,7 +114,7 @@ class Pix2PixModel(pl.LightningModule):
     def backward_G(self, fake, ct_image, dose):
         """Calculate GAN, L1 and VGG loss for the generator"""
         G_losses = {}
-        inst_noise = torch.normal(mean=self.inst_noise_mean, std=self.inst_noise_std).type_as(ct_image)
+        inst_noise = torch.normal(mean=self.inst_noise_mean, std=self.inst_noise_std).type_as(ct_image)  # Create the noise tensor
 
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((ct_image, fake), 1)
@@ -124,7 +126,7 @@ class Pix2PixModel(pl.LightningModule):
         G_losses['loss_G_Feat'] = self.criterionFeat(fake, dose) * self.opt.lambda_A
 
         # combine loss and calculate gradients
-        loss_G = sum(G_losses.values())/len(G_losses)
+        loss_G = sum(G_losses.values())/len(G_losses)  # Average the loss values
         G_losses['g_loss'] = loss_G
 
         return loss_G, G_losses
@@ -134,7 +136,9 @@ class Pix2PixModel(pl.LightningModule):
         Can be used for checking for possible gradient vanishing / exploding problems.
 
         Usage: Plug this function in Trainer class after loss.backwards() as
-        "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+        "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow
+
+        Found: https://discuss.pytorch.org/t/check-gradient-flow-in-network/15063/17'''
         ave_grads = []
         max_grads = []
         layers = []
@@ -176,12 +180,12 @@ class Pix2PixModel(pl.LightningModule):
 
         dict_g = {
             'optimizer': opt_g,
-            'frequency': self.opt.n_generator,
+            'frequency': self.opt.n_generator,  # Number of times the generator step will run in a row
             'lr_scheduler': sched_g
         }
         dict_d = {
             'optimizer': opt_d,
-            'frequency': self.opt.n_critic,
+            'frequency': self.opt.n_critic,  # Number of times the discriminator step will run in a row
             'lr_scheduler': sched_d
         }
 
@@ -207,6 +211,7 @@ class Pix2PixModel(pl.LightningModule):
         self.hold_out_paths = plan_paths[num_train_pats:]  # list of paths used for held out testing
 
     def train_dataloader(self):
+        # Create the dataset using the specfied augmentations
         dataset = KBPDataset(self.opt, self.training_paths, mode_name='training_model', transform=transforms.Compose([
             ToTensor(),
             RandomAugment(self.opt, mask_size=self.opt.cut_blur_mask, augment=not self.opt.no_augment),

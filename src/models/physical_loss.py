@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 
 
+# Class created to test the different structures in the predicated CT image
+# More testing needs to be done to test if it works
 class PhysicalLoss(nn.Module):
 
     def get_loss(self, mask_name, structure):

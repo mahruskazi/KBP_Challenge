@@ -7,13 +7,13 @@ import random
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import models
-from src.models import resnet3d, resnetunet
+from src.models import resnet3d
 import src.models.medicalzoo.medzoo as medzoo
 import src.models.medicalzoo.losses3D as losses3D
 import torch.nn.utils.spectral_norm as spectral_norm
 
 #
-# Functions
+# Functions for different types of weight initializations
 #
 
 
@@ -336,7 +336,7 @@ class GANLoss(nn.Module):
         target_tensor = None
         if target_is_real:
 
-            real_tensor = self.Tensor(input.size()).fill_(random.uniform(0.8, 1.2))
+            real_tensor = self.Tensor(input.size()).fill_(random.uniform(0.8, 1.2))  # Randomly choose a label between a range for one sided label smoothing
             real_tensor = real_tensor.type_as(input)
             self.real_label_var = Variable(real_tensor, requires_grad=False)
             target_tensor = self.real_label_var
@@ -995,57 +995,6 @@ class ResnetGenerator(nn.Module):
         return net
 
 
-class NLayerDiscriminatorSpade(nn.Module):
-
-    def __init__(self, opt):
-        super(NLayerDiscriminatorSpade).__init__()
-        self.opt = opt
-
-        kw = 4
-        padw = int(np.ceil((kw - 1.0) / 2))
-        nf = opt.ndf
-        input_nc = 2
-
-        norm_layer = get_norm_layer(norm_type=opt.norm)
-        sequence = [[nn.Conv3d(input_nc, nf, kernel_size=kw, stride=2, padding=padw),
-                     nn.LeakyReLU(0.2, False)]]
-
-        for n in range(1, opt.n_layers_D):
-            nf_prev = nf
-            nf = min(nf * 2, 512)
-            stride = 1 if n == opt.n_layers_D - 1 else 2
-
-            if opt.norm_D == 'spectralbatch':
-                print("Using spectral normalization")
-                sequence += [[spectral_norm(nn.Conv3d(nf_prev, nf, kernel_size=kw,
-                                                      stride=stride, padding=padw)),
-                              norm_layer(nf),
-                              nn.LeakyReLU(0.2, False)]]
-            else:
-                sequence += [[nn.Conv3d(nf_prev, nf, kernel_size=kw,
-                                                      stride=stride, padding=padw),
-                              norm_layer(nf),
-                              nn.LeakyReLU(0.2, False)]]
-
-        sequence += [[nn.Conv3d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
-
-        # We divide the layers into groups to extract intermediate layer outputs
-        for n in range(len(sequence)):
-            self.add_module('model' + str(n), nn.Sequential(*sequence[n]))
-
-    def forward(self, input):
-        results = [input]
-        for submodel in self.children():
-            intermediate_output = submodel(results[-1])
-            results.append(intermediate_output)
-
-        get_intermediate_features = not self.opt.no_ganFeat_loss
-        if get_intermediate_features:
-            return results[1:]
-        else:
-            return results[-1]
-
-
 class NLayerDiscriminator(nn.Module):
     ''' PatchGAN discriminator, supposed to work on patches within the full image
     to evaluate whether the style is transferred everywhere.
@@ -1215,128 +1164,3 @@ class PixelDiscriminator(nn.Module):
 
     def forward(self, input_data):
         return self.net(input_data)
-
-
-class UnetCNNGenerator(nn.Module):
-    ''' Defines the UNet-CNN from that one paper.
-    Architecture contains downsampling/upsampling operations, with Unet
-    connectors.
-
-    - Outermost Unet:
-        - Conv2d: InputC -> 64, 4x4 kernels
-
-    - Outer Unets:
-        - Leaky ReLU (iv)
-        - Conv2d: 64 -> 128, 4x4 kernels
-        - Leaky ReLU (iii)
-        - Conv2d: 128 -> 256, 4x4 kernels
-        - Leaky ReLU (ii)
-        - Conv2d: 256 -> 512, 4x4 kernels
-
-    - Intermediate Unets (x num_downs):
-        - Leaky ReLU (i)
-        - Conv2d: 512 -> 512, 4x4 kernels
-
-    - Inner Unet:
-        - Leaky ReLU (a)
-        - Conv2d: 512 -> 512, 4x4 kernels
-        - ReLU
-        - Deconv2d: 512 -> 512, 4x4 kernels
-        - Normalize --> Connect to (a)
-
-    - Intermediate Unets continued:
-        - ReLU
-        - Deconv2d: 1024 -> 512, 4x4 kernels
-        - Normalize (-> Dropout ->) --> Connect to (i)
-
-    - Outer Unets:
-        - ReLU
-        - Deconv2d: 512 -> 256, 4x4 kernels
-        - Normalize (-> Dropout ->) --> Connect to (ii)
-        - ReLU
-        - Deconv2d: 256 -> 128, 4x4 kernels
-        - Normalize (-> Dropout ->) --> Connect to (iii)
-        - ReLU
-        - Deconv2d: 128 -> 64, 4x4 kernels
-        - Normalize (-> Dropout ->) --> Connect to (iv)
-
-    - Outermost Unet:
-        - ReLU
-        - Deconv2d: 128 -> outC, 4x4 kernels
-        - Tanh
-    '''
-
-    def __init__(self,
-                 input_nc,
-                 output_nc,
-                 num_downs,
-                 ngf=64,
-                 norm_layer=nn.BatchNorm2d,
-                 use_dropout=False,
-                 conv=nn.Conv2d,
-                 deconv=nn.ConvTranspose2d):
-        '''
-        Args:
-            num_downs:  number of downsamplings in the Unet.
-        '''
-        super(UnetCNNGenerator, self).__init__()
-
-        # blocks are built recursively starting from innermost moving out
-        unet_block = UnetSkipConnectionBlock(
-            ngf * 8,
-            ngf * 8,
-            input_nc=None,
-            submodule=None,
-            norm_layer=norm_layer,
-            innermost=True,
-            conv=conv,
-            deconv=deconv)
-        for i in range(num_downs - 5):
-            unet_block = UnetSkipConnectionBlock(
-                ngf * 8,
-                ngf * 8,
-                input_nc=None,
-                submodule=unet_block,
-                norm_layer=norm_layer,
-                use_dropout=use_dropout,
-                conv=conv,
-                deconv=deconv)
-        unet_block = UnetSkipConnectionBlock(
-            ngf * 4,
-            ngf * 8,
-            input_nc=None,
-            submodule=unet_block,
-            norm_layer=norm_layer,
-            conv=conv,
-            deconv=deconv)
-        unet_block = UnetSkipConnectionBlock(
-            ngf * 2,
-            ngf * 4,
-            input_nc=None,
-            submodule=unet_block,
-            norm_layer=norm_layer,
-            conv=conv,
-            deconv=deconv)
-        unet_block = UnetSkipConnectionBlock(
-            ngf,
-            ngf * 2,
-            input_nc=None,
-            submodule=unet_block,
-            norm_layer=norm_layer,
-            conv=conv,
-            deconv=deconv)
-        unet_block = UnetSkipConnectionBlock(
-            output_nc,
-            ngf,
-            input_nc=input_nc,
-            submodule=unet_block,
-            outermost=True,
-            norm_layer=norm_layer,
-            conv=conv,
-            deconv=deconv)
-
-        self.model = unet_block
-
-    def forward(self, input_data):
-        return self.model(input_data)
-

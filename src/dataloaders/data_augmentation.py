@@ -37,6 +37,7 @@ class NormalizeData(object):
         return sample
 
 
+# Randomly augment the image to either flip, CutBlur, Blur or no augment
 class RandomAugment(object):
     def __init__(self, opt, mask_size, augment=True):
         self.opt = opt
@@ -169,7 +170,7 @@ class ToTensor(object):
 
 
 class ToRightShape(object):
-    """Convert ndarrays in sample to Tensors."""
+    """Convert the tensors to the right shape"""
     def __call__(self, sample):
         tensored_data = {}
         for key in sample:
